@@ -1,0 +1,100 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Dwellant",
+        "description": "Sign in with your first Dwellant portal account. Add more users later via the integration's Options.",
+        "data": {
+          "email": "Email or display name",
+          "password": "Password",
+          "org_id": "Organisation ID (from the portal URL /Org/<id>/...)",
+          "base_url": "Portal address (e.g. https://your-site.dwellant.com)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Dwellant",
+        "description": "Your Dwellant session expired or the password changed. Confirm the email, portal address, organisation and new password.",
+        "data": {
+          "email": "Email or display name",
+          "password": "Password",
+          "org_id": "Organisation ID (from the portal URL /Org/<id>/...)",
+          "base_url": "Portal address (e.g. https://your-site.dwellant.com)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Cannot reach the Dwellant portal. Check your network and try again.",
+      "unknown": "Unexpected error. Check the logs for details."
+    },
+    "abort": {
+      "already_configured": "This Dwellant user is already configured.",
+      "single_instance_allowed": "Dwellant Packages is already set up. Use Options to add or remove users.",
+      "no_users": "No users configured.",
+      "reauth_successful": "Re-authentication successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manage Dwellant users and settings",
+        "description": "Add/remove portal users, change a user's organisation, or change polling and notification settings.",
+        "menu_options": {
+          "add_user": "Add user",
+          "remove_user": "Remove user",
+          "edit_user": "Edit user organisation",
+          "settings": "Polling and notifications"
+        }
+      },
+      "add_user": {
+        "title": "Add Dwellant user",
+        "description": "Sign in with another Dwellant portal account. It becomes its own device and sensor.",
+        "data": {
+          "email": "Email or display name",
+          "password": "Password",
+          "org_id": "Organisation ID (from the portal URL /Org/<id>/...)",
+          "base_url": "Portal address (e.g. https://your-site.dwellant.com)"
+        }
+      },
+      "remove_user": {
+        "title": "Remove Dwellant user",
+        "description": "Remove a portal user and its entities. At least one user must remain.",
+        "data": {
+          "email": "User to remove"
+        }
+      },
+      "edit_user": {
+        "title": "Edit Dwellant user",
+        "description": "Pick a user, then change its portal address or organisation ID (password is re-checked).",
+        "data": {
+          "email": "User to edit",
+          "base_url": "Portal address (e.g. https://your-site.dwellant.com)",
+          "org_id": "Organisation ID (from the portal URL /Org/<id>/...)",
+          "password": "Password"
+        }
+      },
+      "settings": {
+        "title": "Polling and notifications",
+        "description": "Polling interval, collected-history retention and notification preferences.",
+        "data": {
+          "scan_interval": "Polling interval (minutes)",
+          "retention_days": "Keep collected packages for (days, 0 = forever)",
+          "notify_arrival": "Notify on new packages",
+          "notify_collection": "Notify on collected packages"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Cannot reach the Dwellant portal. Check your network and try again.",
+      "unknown": "Unexpected error. Check the logs for details."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "available_packages": {
+        "name": "Available packages"
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+# Python bytecode — regenerated on import, never commit.
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Editors / IDE.
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test / coverage artifacts.
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Virtualenvs.
+.venv/
+venv/
+ENV/
+
+# Home Assistant runtime (if you ever test in-place).
+*.log
+.storage/

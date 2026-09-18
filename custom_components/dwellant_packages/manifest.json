@@ -1,0 +1,13 @@
+{
+  "domain": "dwellant_packages",
+  "name": "Dwellant Packages",
+  "codeowners": ["@latrekc"],
+  "config_flow": true,
+  "documentation": "https://github.com/latrekc/dwellant-packages-tracker",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/latrekc/dwellant-packages-tracker/issues",
+  "loggers": ["custom_components.dwellant_packages"],
+  "requirements": ["beautifulsoup4==4.12.3"],
+  "version": "0.1.0"
+}

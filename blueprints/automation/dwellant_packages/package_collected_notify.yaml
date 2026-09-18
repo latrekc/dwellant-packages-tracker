@@ -1,0 +1,25 @@
+blueprint:
+  name: Dwellant — collected digest notification
+  description: >-
+    Notify once per poll when packages were collected (aggregated, no spam).
+    Fires on dwellant_packages_update when pickups are detected.
+  domain: automation
+  input:
+    notify_service:
+      name: Notification service
+      selector:
+        text:
+
+trigger:
+  - platform: event
+    event_type: dwellant_packages_update
+
+condition:
+  - condition: template
+    value_template: "{{ trigger.event.data.collected_count > 0 }}"
+
+action:
+  - service: !input notify_service
+    data:
+      title: "Dwellant: pickup confirmed"
+      message: "{{ trigger.event.data.collected_count }} package(s) collected for {{ trigger.event.data.email }}."

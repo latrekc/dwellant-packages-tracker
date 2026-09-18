@@ -1,0 +1,49 @@
+# Example automations for Dwellant Packages
+# NOTE: collection codes are internal tracking keys — notifications intentionally
+# show only type + time (the useful info for a resident).
+#
+# Built-in notifications are already AGGREGATED: the integration keeps ONE
+# persistent notification per user (waiting + recently collected) and rewrites
+# it each poll — no spam on batch deliveries/pickups. Use the per-package
+# events below only if you want your own (e.g. mobile push) fan-out.
+# dwellant_packages_update fires once per user per poll with counts — prefer it
+# for "tell me when the waiting list changed" automations.
+
+automation:
+  - alias: "Dwellant: waiting list changed (digest)"
+    trigger:
+      - platform: event
+        event_type: dwellant_packages_update
+    condition:
+      - condition: template
+        value_template: "{{ trigger.event.data.arrived_count > 0 }}"
+    action:
+      - service: notify.mobile_app_your_phone
+        data:
+          title: "Dwellant: {{ trigger.event.data.available_count }} waiting"
+          message: "{{ trigger.event.data.arrived_count }} new package(s) for {{ trigger.event.data.email }}."
+
+  - alias: "Dwellant: per-package arrival (optional fan-out)"
+    trigger:
+      - platform: event
+        event_type: dwellant_new_package
+    action:
+      - service: persistent_notification.create
+        data:
+          title: "New package: {{ trigger.event.data.type }}"
+          message: >-
+            {{ trigger.event.data.type }} for {{ trigger.event.data.email }}
+            ({{ trigger.event.data.unit }}), delivered
+            {{ trigger.event.data.delivery_time_raw or trigger.event.data.delivery_time }}.
+
+  - alias: "Dwellant: per-package collected (optional fan-out)"
+    trigger:
+      - platform: event
+        event_type: dwellant_package_collected
+    action:
+      - service: persistent_notification.create
+        data:
+          title: "Collected: {{ trigger.event.data.type }}"
+          message: >-
+            {{ trigger.event.data.type }}
+            for {{ trigger.event.data.email }} was collected.

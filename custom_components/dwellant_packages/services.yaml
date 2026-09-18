@@ -1,0 +1,8 @@
+# Service used by scripts/deploy.py to raise the restart-required Repairs
+# issue after copying new backend files (HACS model: notify, don't restart).
+raise_restart_issue:
+  name: Raise restart-required issue
+  description: >-
+    Show a restart-required Repairs entry with a one-click restart button.
+    Called automatically by the deploy script after backend files change.
+  fields: {}

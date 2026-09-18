@@ -25,3 +25,7 @@ ENV/
 # Home Assistant runtime (if you ever test in-place).
 *.log
 .storage/
+
+# Local secrets — deploy tokens, targets, credentials. Never commit.
+.env
+.env.local

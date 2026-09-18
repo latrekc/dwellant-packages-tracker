@@ -7,7 +7,7 @@
         "data": {
           "email": "Email or display name",
           "password": "Password",
-          "org_id": "Organisation ID (from the portal URL /Org/<id>/...)",
+          "org_id": "Organisation ID (the number after /Org/ in the portal URL)",
           "base_url": "Portal address (e.g. https://your-site.dwellant.com)"
         }
       },
@@ -17,7 +17,7 @@
         "data": {
           "email": "Email or display name",
           "password": "Password",
-          "org_id": "Organisation ID (from the portal URL /Org/<id>/...)",
+          "org_id": "Organisation ID (the number after /Org/ in the portal URL)",
           "base_url": "Portal address (e.g. https://your-site.dwellant.com)"
         }
       }
@@ -52,7 +52,7 @@
         "data": {
           "email": "Email or display name",
           "password": "Password",
-          "org_id": "Organisation ID (from the portal URL /Org/<id>/...)",
+          "org_id": "Organisation ID (the number after /Org/ in the portal URL)",
           "base_url": "Portal address (e.g. https://your-site.dwellant.com)"
         }
       },
@@ -69,7 +69,7 @@
         "data": {
           "email": "User to edit",
           "base_url": "Portal address (e.g. https://your-site.dwellant.com)",
-          "org_id": "Organisation ID (from the portal URL /Org/<id>/...)",
+          "org_id": "Organisation ID (the number after /Org/ in the portal URL)",
           "password": "Password"
         }
       },
@@ -94,6 +94,19 @@
     "sensor": {
       "available_packages": {
         "name": "Available packages"
+      }
+    }
+  },
+  "issues": {
+    "restart_required": {
+      "title": "Restart required",
+      "fix_flow": {
+        "step": {
+          "confirm_restart": {
+            "title": "Restart required",
+            "description": "New Dwellant Packages files were installed. Restart Home Assistant to load them, click submit to restart now."
+          }
+        }
       }
     }
   }

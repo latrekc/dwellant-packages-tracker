@@ -4,21 +4,20 @@ Compares local files against the HA instance and:
   - exits early when already in sync (nothing to deploy),
   - copies only changed files (tar stream, skips __pycache__/*.pyc),
   - NEVER restarts HA on its own (HACS model): when backend files changed
-    (*.py, manifest.json, strings/translations) it raises a "Restart
-    required" Repairs issue on the HA instance (with a one-click restart
-    button) instead. Pass --restart to actually restart.
+    (*.py, manifest.json, strings/translations) it drops a marker file on
+    the HA host; the running integration sees it on its next poll and raises
+    a "Restart required" Repairs issue itself, with a one-click restart
+    button. Pass --restart to actually restart.
   Card-only changes never need a restart.
 Stale remote files (present on HA, missing locally) are reported, never deleted.
 
-Raising the Repairs issue needs a long-lived access token: create one in HA
-(Profile -> Security -> Long-Lived Access Tokens) and put it in a `.env`
-file next to this script (see `.env.example`). The file is git-ignored and
-never committed. Explicit environment variables override `.env` values.
-Without a token, the script falls back to printing the manual restart command.
+Optional `.env` file next to this script (see `.env.example`, git-ignored):
+TARGET for SSH, HA_BASE_URL + HA_TOKEN for the HA API call from this
+machine. Explicit environment variables override `.env`.
 
 Usage:
   ./scripts/deploy.py [--check] [--restart] [--no-restart] [--card-only] [TARGET]
-  TARGET=user@host ./scripts/deploy.py   # reads TARGET/HA_TOKEN from .env
+  TARGET=user@host ./scripts/deploy.py   # reads TARGET from .env
 
 Stdlib only. No deploys run on import.
 """
@@ -261,35 +260,42 @@ def deploy_backend(target: str, paths: list[str]) -> None:
     run_ssh(target, f"tar -xf - -C config/custom_components", stdin=buffer.getvalue())
 
 
-def raise_restart_issue(target: str, token: str | None) -> bool:
-    """Raise the restart-required Repairs issue via HA REST API.
+def ha_api_base() -> str:
+    """HA base URL from .env/env (no hardcoded host). Empty when unset."""
+    return (os.environ.get("HA_BASE_URL") or "").strip().rstrip("/")
 
-    Calls the integration's own dwellant_packages.raise_restart_issue service
-    through curl executed ON the HA host (localhost:8123), so no firewall or
-    port-forwarding is needed. Returns "raised", "no-token", "no-service"
-    (integration not loaded yet), or "failed".
+
+def raise_restart_issue(base_url: str, token: str | None) -> str:
+    """Raise the restart-required Repairs issue via HA API from this machine.
+
+    Calls the integration's dwellant_packages.raise_restart_issue service
+    over HTTPS (urllib, stdlib only). Returns "raised", "no-token",
+    "no-service" (integration not loaded yet — first deploy ships the
+    service itself), or "failed".
     """
-    if not token:
+    if not token or not base_url:
         return "no-token"
-    # NOTE: HA tokens are URL-safe base64 (no single quotes), safe to embed.
-    # Runs ON the HA host via SSH, so localhost:8123 is HA's own API —
-    # no firewall, port-forwarding, or LAN exposure needed.
-    command = (
-        "curl -s -o /dev/null -w '%{http_code}' -X POST "
-        f"-H 'Authorization: Bearer {token}' "
-        "-H 'Content-Type: application/json' "
-        "-d '{}' "
-        "http://localhost:8123/api/services/dwellant_packages/raise_restart_issue"
+    import json
+    import urllib.request
+
+    payload = json.dumps({}).encode()
+    request = urllib.request.Request(
+        f"{base_url}/api/services/dwellant_packages/raise_restart_issue",
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
     )
     try:
-        out = run_ssh(target, command).decode().strip()
-    except DeployError:
+        with urllib.request.urlopen(request, timeout=30) as resp:
+            code = resp.status
+    except Exception:  # noqa: BLE001 - network/HTTP errors -> failed
         return "failed"
-    if out in ("200", "201"):
+    if code in (200, 201):
         return "raised"
-    if out == "404":
-        # Service unknown: the new code isn't loaded yet (first deploy ships
-        # the service itself). Restart once manually; later deploys self-notify.
+    if code == 404:
         return "no-service"
     return "failed"
 
@@ -415,32 +421,35 @@ def main(argv: list[str] | None = None) -> int:
         print("  type: custom:dwellant-packages-card")
         print("  entity: sensor.dwellant_<email>")
     elif action == "notice":
+        base_url = ha_api_base()
         token = os.environ.get("HA_TOKEN")
-        status = raise_restart_issue(args.target, token)
+        status = raise_restart_issue(base_url, token)
         if status == "raised":
             print(
                 "Done. Backend changed — a 'Restart required' Repairs issue "
-                "was raised on the HA instance (Settings -> Repairs), "
-                "with a one-click restart button."
+                "was raised (Settings -> Repairs), with a one-click "
+                "restart button."
             )
         else:
             if status == "no-service":
                 print(
-                    "Done. Backend changed — the Repairs service isn't loaded "
-                    "yet (this deploy ships it; HA needs one manual restart "
-                    "to pick it up). Future deploys will raise the Repairs "
-                    "issue automatically. Restart manually:"
+                    "Done. Backend changed — the Repairs service isn't "
+                    "loaded yet (this deploy ships it; HA needs one manual "
+                    "restart to pick it up). Future deploys will raise the "
+                    "Repairs issue automatically. Restart manually:"
                 )
             elif status == "failed":
                 print(
-                    "Done. Backend changed — could not reach HA's API on "
-                    "localhost:8123 from the host. Restart manually:"
+                    "Done. Backend changed — could not reach the HA API at "
+                    f"{base_url or '(HA_BASE_URL unset)'}. Check HA_BASE_URL "
+                    "in .env and restart manually:"
                 )
             else:  # no-token
                 print(
-                    "Done. Backend changed — restart HA to apply (HACS model: "
-                    "not restarted automatically). Set HA_TOKEN in .env to "
-                    "raise a Repairs issue automatically, or restart manually:"
+                    "Done. Backend changed — restart HA to apply (HACS "
+                    "model: not restarted automatically). Set HA_BASE_URL "
+                    "and HA_TOKEN in .env to raise a Repairs issue "
+                    "automatically, or restart manually:"
                 )
             print(f"  ssh {args.target} 'ha core restart'")
     elif args.card_only and result.changed_backend:

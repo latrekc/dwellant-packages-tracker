@@ -55,9 +55,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 def raise_restart_issue(hass: HomeAssistant) -> None:
     """Raise the restart-required Repairs issue (HACS model).
 
-    Called by the deploy script via websocket after copying new backend
-    files. Cleared automatically on next successful setup (i.e. after the
-    user actually restarts).
+    Called from inside HA via the dwellant_packages.raise_restart_issue
+    service (the deploy script calls it over the HA API). Cleared
+    automatically on next successful setup (i.e. after the user restarts).
     """
     from homeassistant.helpers.issue_registry import (
         IssueSeverity,
@@ -75,7 +75,7 @@ def raise_restart_issue(hass: HomeAssistant) -> None:
     )
 
 
-def _async_clear_restart_issue(hass: HomeAssistant) -> None:
+def _async_register_services(hass: HomeAssistant) -> None:
     """Delete the restart issue once the new code is actually running."""
     from homeassistant.helpers.issue_registry import async_delete_issue
 

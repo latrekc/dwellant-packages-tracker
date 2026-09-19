@@ -60,10 +60,10 @@ class DwellantPackagesCard extends HTMLElement {
       )
       .join("");
 
+    const title = email ? `📦 ${this._esc(email)} (${count})` : `📦 Packages (${count})`;
     this.innerHTML = `
-      <ha-card header="📦 Dwellant Packages (${count})">
+      <ha-card header="${title}">
         <div class="card-content">
-          ${email ? `<div class="email">${this._esc(email)}</div>` : ""}
           ${
             packages.length
               ? `<table>
@@ -86,7 +86,6 @@ class DwellantPackagesCard extends HTMLElement {
         </div>
       </ha-card>
       <style>
-        .email { opacity: 0.7; font-size: 0.85em; margin-bottom: 8px; }
         table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
         th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--divider-color); }
         .empty { opacity: 0.7; }
@@ -137,5 +136,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "dwellant-packages-card",
   name: "Dwellant Packages Card",
-  description: "Per-user Dwellant parcel list with collection codes.",
+  description: "Per-user Dwellant parcel list (type + delivery time).",
 });

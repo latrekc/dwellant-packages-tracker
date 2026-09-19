@@ -56,8 +56,8 @@ an internal tracking key, never rendered), `collected` (recent first),
   `displayNameOrEmailAddress`, `password`, `rememberMe=True`,
   `saveChanges=Sign in`.
 - Success signal: `DwellantAuthentication` cookie (+ redirect to an
-  authorized page). The old per-site `woodberry-secure` login without the
-  `save` nonce silently returns the login page again — that was the auth bug.
+  authorized page). Logging in without the `save` nonce silently returns
+  the login page again — that was the original auth bug.
 
 ## Tests
 

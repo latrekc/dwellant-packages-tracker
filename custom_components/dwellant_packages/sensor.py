@@ -104,7 +104,10 @@ class DwellantPackagesSensor(CoordinatorEntity[DwellantCoordinator], SensorEntit
         self._email_key = email_key
         email = coordinator.user_email(email_key)
         self._attr_unique_id = f"{entry.entry_id}_{email_key}_available"
-        self._attr_name = f"Dwellant {email}"
+        # Device keeps "Dwellant <email>" so renames at device level
+        # propagate; entity itself is just "Packages" (HA shows
+        # "<device> <entity>" = "Dwellant <email> Packages").
+        self._attr_name = "Packages"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{entry.entry_id}_{email_key}")},
             name=f"Dwellant {email}",

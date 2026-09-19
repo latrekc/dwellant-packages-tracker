@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -122,6 +123,10 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
         )
         self._sync_clients()
         self.data: dict = {}
+        # Last digest content per user (hash of title+message). The digest is
+        # only (re)created or dismissed when its content CHANGES — otherwise a
+        # dismissed notification would pop back on every poll.
+        self._digest_hashes: dict[str, str | None] = {}
 
     def _sync_clients(self) -> None:
         """Create/drop per-user clients to match entry users (no YAML)."""
@@ -248,7 +253,11 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
         self._async_update_digest(email, state, opts)
 
     def _async_update_digest(self, email: str, state: dict, opts: dict) -> None:
-        """Rebuild the single per-user digest notification (overwrite, not stack)."""
+        """Maintain the single per-user digest notification.
+
+        Only creates/dismisses when the digest CONTENT changes since the last
+        poll — otherwise a dismissed notification would reappear every poll.
+        """
         hass = self.hass
         entry_id = self._entry.entry_id
         available = state.get("available", {})
@@ -263,14 +272,16 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
         notification_id = f"dwellant_{entry_id}_{email}_digest"
 
         if not show_waiting and not show_collected:
-            # Nothing to show: dismiss a stale digest instead of stacking.
-            hass.async_create_task(
-                hass.services.async_call(
-                    "persistent_notification",
-                    "dismiss",
-                    {"notification_id": notification_id},
+            # Nothing to show: dismiss once, then stay quiet.
+            if self._digest_hashes.get(email) is not None:
+                self._digest_hashes[email] = None
+                hass.async_create_task(
+                    hass.services.async_call(
+                        "persistent_notification",
+                        "dismiss",
+                        {"notification_id": notification_id},
+                    )
                 )
-            )
             return
 
         lines = []
@@ -295,13 +306,21 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
             title_bits.append(f"{len(waiting)} waiting")
         if show_collected:
             title_bits.append(f"{len(recent_collected)} collected")
+        title = f"Dwellant ({email}): {', '.join(title_bits)}"
+        message = "\n\n".join(lines)
+        digest_hash = hashlib.sha256(
+            f"{title}\n{message}".encode()
+        ).hexdigest()
+        if self._digest_hashes.get(email) == digest_hash:
+            return  # unchanged: leave a user dismissal alone
+        self._digest_hashes[email] = digest_hash
         hass.async_create_task(
             hass.services.async_call(
                 "persistent_notification",
                 "create",
                 {
-                    "title": f"Dwellant ({email}): {', '.join(title_bits)}",
-                    "message": "\n\n".join(lines),
+                    "title": title,
+                    "message": message,
                     "notification_id": notification_id,
                 },
             )

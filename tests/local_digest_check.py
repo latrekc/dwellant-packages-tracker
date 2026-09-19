@@ -167,16 +167,22 @@ class FakeEntry:
     options = {}
 
 
-async def run_poll(hass, entry, previous, fetched, opts):
+def make_coordinator(hass, entry):
+    """One long-lived coordinator (like HA) so digest memory persists."""
+    coordinator = coord_mod.DwellantCoordinator.__new__(coord_mod.DwellantCoordinator)
+    coordinator.hass = hass
+    coordinator._entry = entry
+    coordinator._clients = {}
+    coordinator._digest_hashes = {}
+    return coordinator
+
+
+async def run_poll(hass, entry, coordinator, previous, fetched, opts):
     """Drive one coordinator poll worth of merge + digest, return new state."""
     timestamp = NOW.isoformat()
     state, arrived, collected = state_mod.merge_user_state(
         previous, fetched, 30, timestamp
     )
-    coordinator = coord_mod.DwellantCoordinator.__new__(coord_mod.DwellantCoordinator)
-    coordinator.hass = hass
-    coordinator._entry = entry
-    coordinator._clients = {}
     if previous is not None:
         coordinator._fire_events("user@example.com", state, arrived, collected, opts)
     # Drain tasks HA would have scheduled (service calls are coroutines here).
@@ -216,10 +222,13 @@ def main():
         if not condition:
             failures.append(name)
 
-    # Poll 1: first sight -> silent.
+    # One shared coordinator: digest memory must persist across polls (as in HA).
     hass = FakeHass()
+    coordinator = make_coordinator(hass, entry)
+
+    # Poll 1: first sight -> silent.
     s1 = asyncio.run(
-        run_poll(hass, entry, None, {"A1": pkg("A1"), "B2": pkg("B2")}, opts)
+        run_poll(hass, entry, coordinator, None, {"A1": pkg("A1"), "B2": pkg("B2")}, opts)
     )
     check("poll1 silent on first sight", notifications(hass) == [])
     check(
@@ -229,7 +238,8 @@ def main():
     )
 
     # Poll 2: batch delivery of 3 at once -> ONE digest.
-    hass = FakeHass()
+    hass.services.calls.clear()
+    hass.bus.events.clear()
     fetched2 = {
         "A1": pkg("A1"),
         "B2": pkg("B2"),
@@ -237,7 +247,7 @@ def main():
         "D4": pkg("D4", "Package (Small)", hour=16, minute=5),
         "E5": pkg("E5", "Oversized/Heavy", hour=16, minute=5),
     }
-    s2 = asyncio.run(run_poll(hass, entry, s1, fetched2, opts))
+    s2 = asyncio.run(run_poll(hass, entry, coordinator, s1, fetched2, opts))
     notes = notifications(hass)
     check("poll2 exactly ONE service call", len(notes) == 1, f"(got {len(notes)})")
     if notes:
@@ -268,8 +278,16 @@ def main():
         )
     show("poll2 digest (batch delivery)", hass)
 
+    # Poll 2b: same state again -> NO service call (digest unchanged, a user
+    # dismissal must stick instead of popping back every poll).
+    hass.services.calls.clear()
+    hass.bus.events.clear()
+    asyncio.run(run_poll(hass, entry, coordinator, s2, fetched2, opts))
+    check("poll2b unchanged digest stays quiet", notifications(hass) == [])
+
     # Poll 3: bulk pickup of 4 -> ONE digest, 1 waiting + 4 recent.
-    hass = FakeHass()
+    hass.services.calls.clear()
+    hass.bus.events.clear()
     s2_hist = dict(s2["history"])
     for code in ("A1", "B2", "C3", "D4"):
         s2_hist[code] = {
@@ -279,7 +297,7 @@ def main():
         }
     s2_collected = {**s2, "history": s2_hist}
     fetched3 = {"E5": pkg("E5", "Oversized/Heavy", hour=16, minute=5)}
-    s3 = asyncio.run(run_poll(hass, entry, s2_collected, fetched3, opts))
+    s3 = asyncio.run(run_poll(hass, entry, coordinator, s2_collected, fetched3, opts))
     notes = notifications(hass)
     check("poll3 exactly ONE service call", len(notes) == 1, f"(got {len(notes)})")
     if notes:
@@ -301,7 +319,8 @@ def main():
     show("poll3 digest (bulk pickup)", hass)
 
     # Poll 4: nothing waiting, nothing recent -> dismiss.
-    hass = FakeHass()
+    hass.services.calls.clear()
+    hass.bus.events.clear()
     old_hist = {}
     for code, item in s3["history"].items():
         item = dict(item)
@@ -309,17 +328,26 @@ def main():
             item["collected_at"] = (NOW - timedelta(hours=30)).isoformat()
         old_hist[code] = item
     s3_old = {"available": {}, "history": old_hist, "last_updated": NOW.isoformat()}
-    asyncio.run(run_poll(hass, entry, s3_old, {}, opts))
+    asyncio.run(run_poll(hass, entry, coordinator, s3_old, {}, opts))
     notes = notifications(hass)
     check("poll4 exactly ONE service call", len(notes) == 1)
     if notes:
         check("poll4 call is dismiss", notes[0][1] == "dismiss", notes[0][1])
     show("poll4 dismiss (nothing to show)", hass)
 
+    # Poll 4b: still nothing -> NO second dismiss (stays quiet).
+    hass.services.calls.clear()
+    hass.bus.events.clear()
+    asyncio.run(run_poll(hass, entry, coordinator, s3_old, {}, opts))
+    check("poll4b dismiss not repeated", notifications(hass) == [])
+
     # Poll 5: collection notifications off -> waiting only.
-    hass = FakeHass()
+    # (Fresh coordinator: toggles change the digest content.)
+    hass2 = FakeHass()
+    coordinator2 = make_coordinator(hass2, entry)
     opts_off = {CONF_NOTIFY_ARRIVAL: True, CONF_NOTIFY_COLLECTION: False}
-    asyncio.run(run_poll(hass, entry, s2_collected, fetched3, opts_off))
+    asyncio.run(run_poll(hass2, entry, coordinator2, s2_collected, fetched3, opts_off))
+    hass = hass2
     notes = notifications(hass)
     check("poll5 ONE service call", len(notes) == 1)
     if notes:

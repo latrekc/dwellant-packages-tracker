@@ -6,7 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from custom_components.dwellant_packages.parser import (  # noqa: E402
+    extract_org_id,
     extract_request_verification_token,
+    extract_save_nonce,
     looks_like_login_page,
     normalize_type,
     parse_available_table,
@@ -54,8 +56,19 @@ def test_normalize_types():
     assert normalize_type("Weird Thing")["icon"] == "mdi:package"
 
 
-def test_token_and_login_detection():
+def test_save_nonce_and_login_detection():
     html = (FIXTURES / "login_page.html").read_text()
-    assert extract_request_verification_token(html) == "FAKE-TOKEN-123"
+    assert extract_save_nonce(html) == "live,5,21700,FAKE-NONCE-123"
+    assert extract_request_verification_token(html) == "live,5,21700,FAKE-NONCE-123"
     assert looks_like_login_page(html) is True
     assert looks_like_login_page("<tr><td>T3ST01</td></tr>") is False
+    assert extract_save_nonce("<form></form>") is None
+
+
+def test_extract_org_id():
+    html = (FIXTURES / "authorized_page.html").read_text()
+    assert extract_org_id(html) == 55159
+    assert extract_org_id("<html><body>login form</body></html>") is None
+    assert extract_org_id("") is None
+    # Bare /Org/<id>/ link fallback.
+    assert extract_org_id('<a href="/Org/12345/Home/Index">x</a>') == 12345

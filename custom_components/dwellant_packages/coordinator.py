@@ -11,13 +11,11 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import storage
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import CannotConnect, DwellantClient, InvalidAuth
+from .api import CannotConnect, DwellantClient, InvalidAuth, SessionExpired
 from .const import (
     COLLECTED_RECENT_HOURS,
-    CONF_BASE_URL,
     CONF_NOTIFY_ARRIVAL,
     CONF_NOTIFY_COLLECTION,
-    CONF_ORG_ID,
     CONF_PASSWORD,
     CONF_RETENTION_DAYS,
     CONF_SCAN_INTERVAL,
@@ -29,7 +27,6 @@ from .const import (
     EVENT_PACKAGES_UPDATE,
     MAX_SCAN_MINUTES,
     MIN_SCAN_MINUTES,
-    normalize_base_url,
 )
 from .state import merge_user_state, now_utc
 
@@ -137,29 +134,16 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
                 old_client = self._clients.pop(email)
                 self.hass.async_create_task(old_client.async_close())
         for email, user in wanted.items():
-            org_id = user.get(CONF_ORG_ID)
-            base_url = normalize_base_url(str(user.get(CONF_BASE_URL, "")))
-            if org_id in (None, "") or not base_url:
-                _LOGGER.warning(
-                    "Skipping Dwellant user %s: portal address or "
-                    "organisation ID missing",
-                    email,
-                )
-                continue
             client = self._clients.get(email)
             if client is None:
                 # No shared session: each client owns an isolated cookie jar.
+                # Org ID + portal host are discovered at login, not configured.
                 self._clients[email] = DwellantClient(
                     email=user.get("email", ""),
                     password=user.get(CONF_PASSWORD, ""),
-                    org_id=org_id,
-                    base_url=base_url,
                 )
-            else:
-                if user.get(CONF_PASSWORD, "") != getattr(client, "_password", None):
-                    client.update_password(user.get(CONF_PASSWORD, ""))
-                client.update_org_id(org_id)
-                client.update_base_url(base_url)
+            elif user.get(CONF_PASSWORD, "") != getattr(client, "_password", None):
+                client.update_password(user.get(CONF_PASSWORD, ""))
 
     async def async_initialize(self) -> None:
         """Load persisted state, refresh interval, do first (silent) refresh."""
@@ -182,6 +166,13 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
             except InvalidAuth as err:
                 raise ConfigEntryAuthFailed(
                     f"Dwellant auth failed for {email}"
+                ) from err
+            except SessionExpired as err:
+                # Re-login succeeded but the table still returns the login
+                # form: session/cookie handling is broken server-side.
+                # Surface as auth failure (triggers reauth flow), not a crash.
+                raise ConfigEntryAuthFailed(
+                    f"Dwellant session not sticking for {email}: {err}"
                 ) from err
             except CannotConnect as err:
                 raise UpdateFailed(f"Dwellant fetch failed for {email}: {err}") from err
@@ -337,29 +328,20 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
         return client.email if client else email_key
 
     def user_org_id(self, email_key: str) -> int | None:
-        """Configured org ID for a user key (None when not set)."""
+        """Discovered org ID for a user key (None before first login)."""
         client = self._clients.get(email_key)
-        if client is not None:
+        if client is not None and client.org_id is not None:
             try:
                 return int(client.org_id)
             except (TypeError, ValueError):
                 return None
-        for user in self._entry.data.get(CONF_USERS, []):
-            if str(user.get("email", "")).strip().lower() == email_key:
-                try:
-                    return int(user[CONF_ORG_ID])
-                except (KeyError, TypeError, ValueError):
-                    return None
         return None
 
     def user_base_url(self, email_key: str) -> str:
-        """Configured portal address for a user key."""
+        """Discovered portal host for a user key."""
         client = self._clients.get(email_key)
         if client is not None:
             return str(getattr(client, "base_url", ""))
-        for user in self._entry.data.get(CONF_USERS, []):
-            if str(user.get("email", "")).strip().lower() == email_key:
-                return normalize_base_url(str(user.get(CONF_BASE_URL, "")))
         return ""
 
     @property

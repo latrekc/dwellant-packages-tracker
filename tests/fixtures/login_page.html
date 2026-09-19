@@ -1,13 +1,14 @@
 <!DOCTYPE html>
 <html>
 <body>
-<form action="/Account/SignInOrRegister?ReturnUrl=%2fYourInformation" method="post">
-<input name="__RequestVerificationToken" type="hidden" value="FAKE-TOKEN-123" />
-<input name="returnUrl" type="hidden" value="/YourInformation" />
-<input name="displayNameOrEmailAddress" type="text" value="" />
-<input name="password" type="password" />
-<input name="checkbox" type="checkbox" />
-<button name="saveChanges" type="submit">Sign in</button>
+<form action="https://secure.dwellant.com/Account/SignInOrRegister" method="post" class="standard" id="mainForm">
+<input type="hidden" name="save" value="live,5,21700,FAKE-NONCE-123" />
+<input type="hidden" name="returnUrl" />
+<input value type="text" id="displayNameOrEmailAddress" name="displayNameOrEmailAddress" maxlength="100" size="50" />
+<input type="password" id="password" name="password" maxlength="50" size="50" value class="password">
+<input type="checkbox" id="rememberMe" name="rememberMe" value="True" class="checkbox"><input type="hidden" name="rememberMe" value="False"/>
+<button type="submit" id="saveChanges" name="saveChanges" class="standard">Sign in</button>
+<button type="button" id="forgottenPassword" name="forgottenPassword" class="standard">Reset my password</button>
 </form>
 </body>
 </html>

@@ -95,18 +95,56 @@ def parse_available_table(html: str) -> dict[str, dict]:
     return packages
 
 
-def extract_request_verification_token(html: str) -> str | None:
-    """Extract the anti-forgery token from the login page HTML.
+_ORG_PATTERNS = (
+    # $('#UnreadDocumentCountContainer').load('/Org/55159/EBilling/...')
+    re.compile(r"""/Org/(\d+)/"""),
+    # PATH_PREFIX: "/Org/55159"
+    re.compile(r"""PATH_PREFIX\s*:\s*["']/Org/(\d+)["']"""),
+)
 
-    Tries common ASP.NET names; returns None when not found (caller may
-    proceed without a token or raise CannotConnect).
+
+def extract_save_nonce(html: str) -> str | None:
+    """Extract the server-issued ``save`` nonce from the sign-in form.
+
+    The central portal (secure.dwellant.com) requires this hidden field on
+    every login POST; without it the portal silently returns the login page
+    again (HTTP 200, no redirect). Returns None when not found.
     """
     soup = BeautifulSoup(html or "", "html.parser")
-    for name in ("__RequestVerificationToken", "SOME_TOKEN", "__token"):
+    tag = soup.find("input", attrs={"name": "save"})
+    if tag and tag.get("value"):
+        return tag["value"]
+    return None
+
+
+def extract_org_id(html: str) -> int | None:
+    """Discover the Org ID from an authorized page.
+
+    Tries, in order: ``codwellers.Constants.PATH_PREFIX``, any ``/Org/<id>/``
+    link, and the unread-documents loader snippet. Returns None when absent
+    (e.g. the page is still the login form).
+    """
+    text = html or ""
+    for pattern in _ORG_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            try:
+                return int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def extract_request_verification_token(html: str) -> str | None:
+    """Deprecated: kept for backwards-compat tests; use extract_save_nonce.
+
+    Tries common ASP.NET names; returns None when not found.
+    """
+    soup = BeautifulSoup(html or "", "html.parser")
+    for name in ("save", "__RequestVerificationToken", "SOME_TOKEN", "__token"):
         tag = soup.find("input", attrs={"name": name})
         if tag and tag.get("value"):
             return tag["value"]
-    # Fallback: any hidden input with 'token' or 'verification' in the name.
     for tag in soup.find_all("input", attrs={"type": "hidden"}):
         name = (tag.get("name") or "").lower()
         if "token" in name or "verification" in name:

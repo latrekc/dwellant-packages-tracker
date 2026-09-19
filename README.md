@@ -1,21 +1,21 @@
 # dwellant-packages-tracker
 
-Home Assistant custom integration that tracks parcels in a Dwellant resident
-portal. One config entry holds **multiple users** — each login has its own
-portal address, email, password and **organisation ID** (the `/Org/<id>/`
-number from the portal URL, all required) and becomes its own device + sensor.
-No YAML, no hardcoded credentials or addresses: everything lives in the HA
-database (`.storage`).
+Home Assistant custom integration that tracks parcels in the Dwellant resident
+portal (`secure.dwellant.com`). One config entry holds **multiple users** —
+each login needs just email + password and becomes its own device + sensor.
+No YAML, no hardcoded credentials: everything lives in the HA database
+(`.storage`). The portal address and organisation ID are discovered
+automatically at login (central sign-in + org parsed from the authorized page).
 
 ## How it works
 
 1. **Setup (UI only):** Settings → Devices & Services → Add Integration →
-   Dwellant Packages → enter first user's portal address (e.g.
-   `https://your-site.dwellant.com`), email + password + organisation ID
-   (the `/Org/<id>/` number from your portal URL, validated live).
-   Add more users later via the integration's **Options → Add user**; change
-   a user's portal address or org via **Options → Edit user**.
-2. **Polling:** every 5 min (configurable 5–60) each user's session POSTs
+   Dwellant Packages → enter email + password (validated live against the
+   central portal). Add more users later via **Options → Add user**.
+2. **Login:** GET the central sign-in page, submit the server-issued `save`
+   nonce with credentials; success = `DwellantAuthentication` cookie. Org ID
+   is parsed from the authorized page (`PATH_PREFIX` / `/Org/<id>/` links).
+3. **Polling:** every 5 min (configurable 5–60) each user's session POSTs
    `/Org/<org_id>/DeliveredPackage/AvailablePackageTableRows`
    (`firstResult/maxResults/sortProperty/isAscendingSort`), parses the `<tr>`
    rows (Unit, Type, Collection Code, Delivery Time, Concierge).
@@ -46,15 +46,18 @@ database (`.storage`).
 Per user: state = available count; attributes `packages` (sorted, with
 `code/unit/type/delivery_time/delivery_time_raw/concierge/icon` — `code` is
 an internal tracking key, never rendered), `collected` (recent first),
-`unit`, `email`, `org_id`, `portal`, `last_updated`.
+`unit`, `email`, `org_id` + `portal` (auto-discovered at login),
+`last_updated`.
 
-## Verify before first real login
+## Login form contract (verified against the live portal)
 
-The login form field names (`__RequestVerificationToken`, `returnUrl`,
-`displayNameOrEmailAddress`, `checkbox`/`saveChanges`) and the
-session-expiry signal were derived from a devtools snapshot — confirm once
-against the live portal (GET login page → token names; POST → success
-redirect to `/YourInformation`).
+- Sign-in page: `GET https://secure.dwellant.com/Account/SignInOrRegister?ReturnUrl=`
+- Required POST fields: `save` (server-issued nonce from the form),
+  `displayNameOrEmailAddress`, `password`, `rememberMe=True`,
+  `saveChanges=Sign in`.
+- Success signal: `DwellantAuthentication` cookie (+ redirect to an
+  authorized page). The old per-site `woodberry-secure` login without the
+  `save` nonce silently returns the login page again — that was the auth bug.
 
 ## Tests
 

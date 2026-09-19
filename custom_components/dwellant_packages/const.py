@@ -6,37 +6,23 @@ DOMAIN = "dwellant_packages"
 PLATFORMS = ["sensor"]
 
 
-def normalize_base_url(raw: str) -> str:
-    """Normalize a user-typed portal address to a https://host base URL."""
-    text = (raw or "").strip().rstrip("/")
-    if not text:
-        return ""
-    if "://" not in text:
-        text = f"https://{text}"
-    scheme, _, rest = text.partition("://")
-    host = rest.split("/")[0].strip()
-    return f"{scheme or 'https'}://{host}" if host else ""
-
-
-def login_url_for(base_url: str) -> str:
-    """Sign-in URL for a portal base address."""
-    return f"{normalize_base_url(base_url)}/Account/SignInOrRegister?ReturnUrl=%2fYourInformation"
+LOGIN_BASE_URL = "https://secure.dwellant.com"
+LOGIN_URL = f"{LOGIN_BASE_URL}/Account/SignInOrRegister?ReturnUrl="
 
 
 def table_url_for(base_url: str, org_id: int | str) -> str:
     """Available-packages table URL for a portal base address + Org ID."""
-    return f"{normalize_base_url(base_url)}/Org/{org_id}/DeliveredPackage/AvailablePackageTableRows"
+    return f"{base_url.rstrip('/')}/Org/{org_id}/DeliveredPackage/AvailablePackageTableRows"
 
 
 # Key names only — values live in the config entry (HA .storage, i.e. the
 # HA database), never in YAML and never hardcoded. A single config entry
-# holds CONF_USERS: a list of {email, password, org_id, base_url} dicts; each
-# user becomes its own device + sensor entities.
+# holds CONF_USERS: a list of {email, password} dicts; each user becomes
+# its own device + sensor entities. Portal address and org ID are discovered
+# automatically at login (central portal + org parsed from authorized page).
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_USERS = "users"
-CONF_ORG_ID = "org_id"
-CONF_BASE_URL = "base_url"
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_RETENTION_DAYS = "retention_days"
 CONF_NOTIFY_ARRIVAL = "notify_arrival"

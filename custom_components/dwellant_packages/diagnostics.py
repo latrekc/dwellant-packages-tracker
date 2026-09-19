@@ -7,7 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_BASE_URL, CONF_ORG_ID, CONF_USERS, DOMAIN
+from .const import CONF_USERS, DOMAIN
 from .coordinator import DwellantCoordinator
 
 TO_REDACT = {"password", "cookie", "cookies", "token", "authorization", "set-cookie"}
@@ -21,20 +21,19 @@ async def async_get_config_entry_diagnostics(
     users = []
     for user in entry.data.get(CONF_USERS, []):
         email = str(user.get("email", ""))
+        key = email.strip().lower()
         users.append(
             {
                 "email": f"{email[:2]}***" if email else "***",
-                "org_id": user.get(CONF_ORG_ID),
-                "portal": user.get(CONF_BASE_URL),
+                "org_id": coordinator.user_org_id(key),
+                "portal": coordinator.user_base_url(key),
             }
         )
     packages: dict[str, Any] = {}
     for email_key, state in (coordinator.data or {}).items():
         available = state.get("available", {})
         history = state.get("history", {})
-        collected = sum(
-            1 for i in history.values() if i.get("status") == "collected"
-        )
+        collected = sum(1 for i in history.values() if i.get("status") == "collected")
         packages[email_key] = {
             "available_count": len(available),
             "available_codes": sorted(available.keys()),

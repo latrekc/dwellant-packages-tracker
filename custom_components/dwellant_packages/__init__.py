@@ -75,7 +75,7 @@ def raise_restart_issue(hass: HomeAssistant) -> None:
     )
 
 
-def _async_register_services(hass: HomeAssistant) -> None:
+def _async_clear_restart_issue(hass: HomeAssistant) -> None:
     """Delete the restart issue once the new code is actually running."""
     from homeassistant.helpers.issue_registry import async_delete_issue
 

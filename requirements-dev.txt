@@ -1,0 +1,13 @@
+# Development/deploy tooling dependencies for dwellant-packages-tracker.
+#
+# Install into a virtualenv for running the deploy script and the test suite:
+#   pip install -r requirements-dev.txt
+#
+# ha-deploy-kit is pinned to an immutable full commit SHA (never a branch) so a
+# given deploy resolves to exactly one revision. Bump the pin deliberately and
+# keep it in sync with custom_components/dwellant_packages/manifest.json.
+ha-deploy-kit @ git+ssh://git@github.com/latrekc-meta/ha-deploy-kit@cc95ca97546118c8620bb8fb1ba0f383270a7180
+
+# Test/lint tooling.
+pytest
+ruff==0.17.2

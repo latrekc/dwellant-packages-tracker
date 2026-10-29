@@ -10,7 +10,7 @@
   "loggers": ["custom_components.dwellant_packages"],
   "requirements": [
     "beautifulsoup4==4.12.3",
-    "ha-deploy-kit @ git+ssh://git@github.com/latrekc-meta/ha-deploy-kit@cc95ca97546118c8620bb8fb1ba0f383270a7180"
+    "ha-deploy-kit==0.1.2"
   ],
   "version": "0.1.0"
 }

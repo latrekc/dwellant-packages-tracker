@@ -6,7 +6,7 @@
 # ha-deploy-kit is installed from PyPI, pinned to an exact version so a given
 # deploy resolves to exactly one release. Bump deliberately and keep it in sync
 # with custom_components/dwellant_packages/manifest.json.
-ha-deploy-kit==0.1.2
+ha-deploy-kit==0.1.4
 
 # Test/lint tooling.
 pytest

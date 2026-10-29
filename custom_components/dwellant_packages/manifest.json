@@ -10,7 +10,7 @@
   "loggers": ["custom_components.dwellant_packages"],
   "requirements": [
     "beautifulsoup4==4.12.3",
-    "ha-deploy-kit==0.1.2"
+    "ha-deploy-kit==0.1.4"
   ],
   "version": "0.1.0"
 }

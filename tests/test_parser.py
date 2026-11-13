@@ -73,3 +73,44 @@ def test_extract_org_id():
     assert extract_org_id("") is None
     # Bare /Org/<id>/ link fallback.
     assert extract_org_id('<a href="/Org/12345/Home/Index">x</a>') == 12345
+
+
+def _email_html(note_paragraph: str) -> str:
+    """Minimal Dwellant-style email: boilerplate, QR img, then note."""
+    return (
+        "<html><body><div>"
+        "<p>It arrived at 13/11/2026 18:10 and was accepted by Concierge.</p>"
+        "<p>Your parcel has been registered with reference code G2A2U7 and QR.</p>"
+        "<p><b>Please collect from the Concierge Desk.</b></p>"
+        '<img src="https://example.com/qr" alt="QR Code" />'
+        f"{note_paragraph}"
+        "</div></body></html>"
+    )
+
+
+def test_extract_description_after_qr():
+    html = _email_html("<p>A Miele package - DPD</p>")
+    assert extract_gmail_description(html) == "A Miele package - DPD"
+
+
+def test_extract_description_empty_after_qr_is_none():
+    # Template with NO note: trailing <p> is empty -> None, NOT boilerplate.
+    html = _email_html("<p></p>")
+    assert extract_gmail_description(html) is None
+
+
+def test_extract_description_ignores_boilerplate_after_qr():
+    # Only boilerplate echoes after the QR (forwarded/odd template) -> None.
+    html = _email_html("<p>Please collect from the Concierge Desk.</p>")
+    assert extract_gmail_description(html) is None
+
+
+def test_extract_description_no_img_falls_back():
+    # No QR img at all (odd template): last non-boilerplate <p> wins.
+    html = (
+        "<html><body>"
+        "<p>It arrived at 13/11/2026 18:10 and was accepted by Concierge.</p>"
+        "<p>A Miele package - DPD</p>"
+        "</body></html>"
+    )
+    assert extract_gmail_description(html) == "A Miele package - DPD"

@@ -47,7 +47,9 @@ def test_async_setup_registers_fixable_service_and_serves_card(monkeypatch):
     card_hass, card_domain, lovelace_dir, card_url = calls["card"]
     assert card_hass is hass
     assert card_domain == DOMAIN
-    assert card_url == CARD_URL
+    # Versioned query string busts the browser cache on card changes.
+    assert card_url == init_mod.CARD_VERSIONED_URL
+    assert card_url.startswith(CARD_URL + "?v=")
     assert lovelace_dir.endswith("dwellant_packages/lovelace")
 
 

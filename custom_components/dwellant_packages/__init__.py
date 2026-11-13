@@ -18,6 +18,11 @@ from .const import DOMAIN, PLATFORMS, STORAGE_VERSION
 from .coordinator import DwellantCoordinator
 
 CARD_URL = "/dwellant_packages/dwellant-packages-card.js"
+# Bump on every card change so browsers drop the cached copy (HA restarts
+# re-register the resource; the query string defeats stale-JS rendering
+# where notifications already show notes but the card shows no column).
+CARD_VERSION = "20261113b"
+CARD_VERSIONED_URL = f"{CARD_URL}?v={CARD_VERSION}"
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -30,7 +35,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """
     async_register_restart_service(hass, DOMAIN, fixable=True)
     lovelace_dir = str(Path(__file__).parent / "lovelace")
-    register_card_serving(hass, DOMAIN, lovelace_dir, CARD_URL)
+    register_card_serving(hass, DOMAIN, lovelace_dir, CARD_VERSIONED_URL)
     return True
 
 

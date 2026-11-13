@@ -99,27 +99,60 @@ def parse_available_table(html: str) -> dict[str, dict]:
 def extract_gmail_description(html: str) -> str | None:
     """Extract package description from a Dwellant notification email.
 
-    The description is the last non-empty ``<p>`` (e.g. "A Miele package -
-    DPD" under the QR code). Plain-text fallback: last non-empty line.
-    Empty/missing -> None. Never raises.
+    The note is a paragraph AFTER the QR image (e.g. "A Miele package -
+    DPD" under the QR code). Boilerplate above the QR ("It arrived ...",
+    "reference code ...", "Please collect ...") is never a description.
+    When nothing non-empty follows the QR (empty trailing <p>, template
+    without a note), returns None. Plain-text fallback: last non-empty line
+    that is not a boilerplate line. Never raises.
     """
     try:
         text = html or ""
         if "<" in text and ">" in text:
             soup = BeautifulSoup(text, "html.parser")
+            # Only paragraphs after the QR image count — anything above it
+            # is template boilerplate (arrival line, reference code, "Please
+            # collect from the Concierge Desk.").
+            img = soup.find("img")
+            scope = img.parent if img is not None and img.parent is not None else soup
             paras = [
                 " ".join(p.get_text(" ", strip=True).split())
-                for p in soup.find_all("p")
+                for p in scope.find_all("p")
             ]
-            paras = [p for p in paras if p]
-            # HTML input: the <p>s are authoritative — an empty/whitespace-only
-            # body means "no description", not "the raw markup is the text".
-            return paras[-1] if paras else None
+            if img is not None:
+                # Keep only <p>s positioned after the <img> in document order.
+                after = []
+                seen_img = False
+                for tag in scope.descendants:
+                    if tag is img:
+                        seen_img = True
+                    elif seen_img and getattr(tag, "name", None) == "p":
+                        para = " ".join(tag.get_text(" ", strip=True).split())
+                        if para:
+                            after.append(para)
+                paras = after
+            else:
+                paras = [p for p in paras if p]
+            candidates = [p for p in paras if not _looks_like_boilerplate(p)]
+            return candidates[-1] if candidates else None
         lines = [" ".join(ln.split()) for ln in text.splitlines()]
-        lines = [ln for ln in lines if ln]
+        lines = [ln for ln in lines if ln and not _looks_like_boilerplate(ln)]
         return lines[-1] if lines else None
     except Exception:  # noqa: BLE001
         return None
+
+
+_BOILERPLATE_RES = (
+    re.compile(r"^it arrived at\b", re.IGNORECASE),
+    re.compile(r"reference code\b", re.IGNORECASE),
+    re.compile(r"^please collect from the concierge desk\.?$", re.IGNORECASE),
+)
+
+
+def _looks_like_boilerplate(text: str) -> bool:
+    """True for template lines that are never the concierge note."""
+    stripped = " ".join((text or "").split())
+    return any(rx.search(stripped) for rx in _BOILERPLATE_RES)
 
 
 _ORG_PATTERNS = (

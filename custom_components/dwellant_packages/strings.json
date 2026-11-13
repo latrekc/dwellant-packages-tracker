@@ -22,7 +22,7 @@
         "description": "Optional: look up the concierge note for each collection code in your inbox. Gmail needs an App Password (not your normal password): 1) turn on 2-Step Verification at myaccount.google.com/signin/security, 2) create an app password at myaccount.google.com/apppasswords, 3) paste it below (spaces are fine, they are removed automatically). Server-side search only — just the matching emails are read. Leave the app password blank to skip.",
         "data": {
           "imap_host": "IMAP host (imap.gmail.com for Gmail)",
-          "imap_username": "IMAP username (defaults to your Dwellant email)",
+          "imap_username": "IMAP username = mailbox the Dwellant emails land in (set explicitly for aliases)",
           "imap_password": "Gmail App Password (blank = skip)"
         }
       },
@@ -31,7 +31,7 @@
         "description": "Optional: look up the concierge note for each collection code in your inbox. Gmail needs an App Password (not your normal password): 1) turn on 2-Step Verification at myaccount.google.com/signin/security, 2) create an app password at myaccount.google.com/apppasswords, 3) paste it below (spaces are fine, they are removed automatically). Server-side search only — just the matching emails are read. Leave the app password blank to skip.",
         "data": {
           "imap_host": "IMAP host (imap.gmail.com for Gmail)",
-          "imap_username": "IMAP username (defaults to your Dwellant email)",
+          "imap_username": "IMAP username = mailbox the Dwellant emails land in (set explicitly for aliases)",
           "imap_password": "Gmail App Password (blank = skip)"
         }
       }
@@ -81,7 +81,7 @@
         "data": {
           "email": "User",
           "imap_host": "IMAP host (imap.gmail.com for Gmail)",
-          "imap_username": "IMAP username",
+          "imap_username": "IMAP username = mailbox the Dwellant emails land in",
           "imap_password": "Gmail App Password (blank = disable)"
         }
       },

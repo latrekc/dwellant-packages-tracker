@@ -98,14 +98,54 @@ def _imap_blocking_search(
             imap.select("INBOX", readonly=True)
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("IMAP select INBOX failed: %s", err)
-            return results
+            return outcome
+        # Gmail labels auto-archived concierge mail out of INBOX? Fall back to
+        # All Mail ([Gmail]/All Mail) when INBOX search finds nothing, so the
+        # query stays server-side in both attempts.
         for code in codes:
             try:
                 # Server-side search: only matching UIDs come back.
+                _LOGGER.debug(
+                    'IMAP SEARCH for code %s: UID SEARCH TEXT "%s" on INBOX '
+                    "of %s@%s",
+                    code,
+                    code,
+                    username,
+                    host,
+                )
                 status, data = imap.uid("SEARCH", "TEXT", f'"{code}"')
-                if status != "OK" or not data or not data[0]:
-                    continue
-                uids = data[0].split()[-IMAP_SEARCH_LIMIT:]
+                _LOGGER.debug(
+                    "IMAP SEARCH for code %s: status=%s uids=%r",
+                    code,
+                    status,
+                    data[0][:100] if data and data[0] else b"",
+                )
+                uids = (
+                    data[0].split()[-IMAP_SEARCH_LIMIT:]
+                    if status == "OK" and data and data[0]
+                    else []
+                )
+                if not uids:
+                    try:
+                        imap.select('"[Gmail]/All Mail"', readonly=True)
+                        astatus, adata = imap.uid("SEARCH", "TEXT", f'"{code}"')
+                        _LOGGER.debug(
+                            "IMAP SEARCH for code %s on All Mail: status=%s uids=%r",
+                            code,
+                            astatus,
+                            adata[0][:100] if adata and adata[0] else b"",
+                        )
+                        if astatus == "OK" and adata and adata[0]:
+                            uids = adata[0].split()[-IMAP_SEARCH_LIMIT:]
+                        imap.select("INBOX", readonly=True)
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.debug(
+                            "IMAP All Mail fallback failed for %s: %s", code, err
+                        )
+                        try:
+                            imap.select("INBOX", readonly=True)
+                        except Exception:  # noqa: BLE001
+                            pass
                 if not uids:
                     continue
                 # Newest first; take the first whose body contains the code.

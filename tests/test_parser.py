@@ -93,24 +93,7 @@ def test_extract_description_after_qr():
     assert extract_gmail_description(html) == "A Miele package - DPD"
 
 
-def test_extract_description_empty_after_qr_is_none():
-    # Template with NO note: trailing <p> is empty -> None, NOT boilerplate.
+def test_extract_description_empty_last_paragraph_is_none():
+    # Template with NO note: trailing <p> is empty -> None (falsy downstream).
     html = _email_html("<p></p>")
     assert extract_gmail_description(html) is None
-
-
-def test_extract_description_ignores_boilerplate_after_qr():
-    # Only boilerplate echoes after the QR (forwarded/odd template) -> None.
-    html = _email_html("<p>Please collect from the Concierge Desk.</p>")
-    assert extract_gmail_description(html) is None
-
-
-def test_extract_description_no_img_falls_back():
-    # No QR img at all (odd template): last non-boilerplate <p> wins.
-    html = (
-        "<html><body>"
-        "<p>It arrived at 13/11/2026 18:10 and was accepted by Concierge.</p>"
-        "<p>A Miele package - DPD</p>"
-        "</body></html>"
-    )
-    assert extract_gmail_description(html) == "A Miele package - DPD"

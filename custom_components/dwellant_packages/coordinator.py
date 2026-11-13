@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import storage
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -278,6 +279,17 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
                 return fetched
             self._gmail_cache.update(found)
             self._gmail_searched.update(unknown)
+            if getattr(client, "auth_failed", False):
+                self._async_raise_imap_auth_issue(email_key, client)
+            else:
+                self._async_clear_imap_auth_issue(email_key)
+            searched = [c for c in unknown if found.get(c, {}).get("email_found")]
+            _LOGGER.info(
+                "IMAP enrichment for %s: searched %d code(s), email found for %d",
+                email_key,
+                len(unknown),
+                len(searched),
+            )
         enriched: dict[str, dict] = {}
         for code, pkg in fetched.items():
             item = dict(pkg)
@@ -302,6 +314,37 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
                 if isinstance(pkg, dict) and pkg.get("email_found"):
                     return True
         return False
+
+    def _async_raise_imap_auth_issue(
+        self, email_key: str, client: ImapEnrichmentClient
+    ) -> None:
+        """Surface a bad/revoked app password as a fixable Repairs issue."""
+        try:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                f"imap_auth_{self._entry.entry_id}_{email_key}",
+                is_fixable=True,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="imap_auth_failed",
+                translation_placeholders={
+                    "email": self.user_email(email_key),
+                    "host": client.host,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Could not create IMAP auth issue for %s", email_key)
+
+    def _async_clear_imap_auth_issue(self, email_key: str) -> None:
+        """Clear the IMAP auth issue once login succeeds again."""
+        try:
+            ir.async_delete_issue(
+                self.hass,
+                DOMAIN,
+                f"imap_auth_{self._entry.entry_id}_{email_key}",
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _fire_events(
         self,

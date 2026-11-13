@@ -61,24 +61,39 @@ def _imap_blocking_search(
 ) -> dict[str, dict]:
     """Blocking IMAP search+fetch. Runs in an executor thread.
 
-    Returns {code: {"email_found": bool, "description": str | None}}.
-    email_found=True means an email containing the code was located
-    (description may still be None when the note is empty).
+    Returns {"results": {code: {...}}, "auth_failed": bool}. auth_failed is
+    True only when the server rejected the credentials (wrong/expired app
+    password) — as opposed to a transient network error. email_found=True
+    means an email containing the code was located (description may still
+    be None when the note is empty).
     """
     results: dict[str, dict] = {
         code: {"email_found": False, "description": None} for code in codes
     }
+    outcome: dict = {"results": results, "auth_failed": False}
     try:
         imap = imaplib.IMAP4_SSL(host, timeout=30)
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("IMAP connect to %s failed: %s", host, err)
-        return results
+        return outcome
     try:
         try:
             imap.login(username, password)
+        except imaplib.IMAP4.error as err:
+            # Credentials rejected (e.g. regular password instead of an app
+            # password, or a revoked one) — visible, actionable, logged once
+            # per poll at warning, not hidden at debug.
+            _LOGGER.warning(
+                "IMAP login failed for %s: %s. Use a Gmail App Password "
+                "(myaccount.google.com/apppasswords), not your normal password.",
+                username,
+                err,
+            )
+            outcome["auth_failed"] = True
+            return outcome
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("IMAP login failed for %s: %s", username, err)
-            return results
+            return outcome
         try:
             imap.select("INBOX", readonly=True)
         except Exception as err:  # noqa: BLE001
@@ -121,7 +136,7 @@ def _imap_blocking_search(
             imap.logout()
         except Exception:  # noqa: BLE001
             pass
-    return results
+    return outcome
 
 
 class ImapEnrichmentClient:
@@ -131,7 +146,14 @@ class ImapEnrichmentClient:
         self.email = email
         self.host = str(imap_config.get(CONF_IMAP_HOST) or DEFAULT_IMAP_HOST)
         self.username = str(imap_config.get(CONF_IMAP_USERNAME) or email)
-        self.password = str(imap_config.get(CONF_IMAP_PASSWORD) or "")
+        # Belt-and-braces: stored passwords predate space-stripping, and
+        # Google shows app passwords grouped with spaces.
+        self.password = "".join(
+            str(imap_config.get(CONF_IMAP_PASSWORD) or "").split()
+        )
+        # Set after each fetch: server rejected the credentials (wrong or
+        # revoked app password). Coordinator surfaces it as a repair issue.
+        self.auth_failed = False
 
     @property
     def enabled(self) -> bool:
@@ -148,14 +170,16 @@ class ImapEnrichmentClient:
         """SEARCH inbox for each code.
 
         Returns {code: {"email_found": bool, "description": str | None}}.
+        Sets self.auth_failed when the server rejected the credentials.
         Never raises: on any failure every code maps to email_found=False.
         """
+        self.auth_failed = False
         if not self.enabled or not codes:
             return {
                 code: {"email_found": False, "description": None} for code in codes
             }
         try:
-            return await asyncio.to_thread(
+            outcome = await asyncio.to_thread(
                 _imap_blocking_search,
                 self.host,
                 self.username,
@@ -167,3 +191,6 @@ class ImapEnrichmentClient:
             return {
                 code: {"email_found": False, "description": None} for code in codes
             }
+        if outcome.get("auth_failed"):
+            self.auth_failed = True
+        return outcome.get("results", {})

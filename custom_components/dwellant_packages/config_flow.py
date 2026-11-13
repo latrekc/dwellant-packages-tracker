@@ -69,13 +69,22 @@ IMAP_SCHEMA = vol.Schema(
 )
 
 
+def _normalize_imap_password(raw: str) -> str:
+    """Strip ALL whitespace from an app password.
+
+    Google displays app passwords grouped as "xxxx xxxx xxxx xxxx" and most
+    people paste with spaces; IMAP rejects those. So "abcd efgh" -> "abcdefgh".
+    """
+    return "".join(str(raw or "").split())
+
+
 def _imap_fields(user_input: dict, fallback_email: str = "") -> dict:
     """Extract optional IMAP settings (blank password = disabled)."""
     host = str(user_input.get(CONF_IMAP_HOST) or DEFAULT_IMAP_HOST).strip()
     username = str(
         user_input.get(CONF_IMAP_USERNAME) or fallback_email
     ).strip()
-    password = str(user_input.get(CONF_IMAP_PASSWORD) or "")
+    password = _normalize_imap_password(user_input.get(CONF_IMAP_PASSWORD) or "")
     fields = {CONF_IMAP_HOST: host}
     if username:
         fields[CONF_IMAP_USERNAME] = username
@@ -97,6 +106,36 @@ async def _validate_login(hass: HomeAssistant, email: str, password: str) -> Non
         await client.async_login()
     finally:
         await client.async_close()
+
+
+async def _validate_imap(host: str, username: str, password: str) -> None:
+    """Validate IMAP credentials with a real server login.
+
+    Raises InvalidAuth when the server rejects the credentials (e.g. a
+    regular Gmail password instead of an App Password), CannotConnect when
+    the host is unreachable. Empty password = disabled, always valid.
+    """
+    if not password:
+        return
+    try:
+        import imaplib
+
+        imap = imaplib.IMAP4_SSL(host, timeout=30)
+        try:
+            imap.login(username, password)
+        except imaplib.IMAP4.error as err:
+            raise InvalidAuth(f"IMAP login rejected: {err}") from err
+        except Exception as err:  # noqa: BLE001
+            raise CannotConnect(f"IMAP connection failed: {err}") from err
+        finally:
+            try:
+                imap.logout()
+            except Exception:  # noqa: BLE001
+                pass
+    except (InvalidAuth, CannotConnect):
+        raise
+    except Exception as err:  # noqa: BLE001
+        raise CannotConnect(f"IMAP check failed: {err}") from err
 
 
 class DwellantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -136,13 +175,43 @@ class DwellantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="imap", data_schema=IMAP_SCHEMA)
 
     async def async_step_imap(self, user_input=None):
-        """Optional IMAP enrichment (server-side SEARCH, blank = skip)."""
+        """Optional IMAP enrichment (server-side SEARCH, blank = skip).
+
+        Credentials are validated live against the IMAP server so a typo or
+        a regular password (instead of an app password) fails here with a
+        clear error — not silently every poll.
+        """
         if not hasattr(self, "_pending_user"):
             return self.async_abort(reason="unknown")
         if user_input is None:
             return self.async_show_form(step_id="imap", data_schema=IMAP_SCHEMA)
         email = self._pending_user[CONF_EMAIL]
         imap_fields = _imap_fields(user_input, fallback_email=email)
+        password = str(imap_fields.get(CONF_IMAP_PASSWORD) or "")
+        if password:
+            try:
+                await _validate_imap(
+                    str(imap_fields.get(CONF_IMAP_HOST) or DEFAULT_IMAP_HOST),
+                    str(imap_fields.get(CONF_IMAP_USERNAME) or email),
+                    password,
+                )
+            except InvalidAuth:
+                return self.async_show_form(
+                    step_id="imap",
+                    data_schema=IMAP_SCHEMA,
+                    errors={"base": "invalid_auth"},
+                )
+            except CannotConnect:
+                return self.async_show_form(
+                    step_id="imap",
+                    data_schema=IMAP_SCHEMA,
+                    errors={"base": "cannot_connect"},
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected IMAP validation error")
+                return self.async_show_form(
+                    step_id="imap", data_schema=IMAP_SCHEMA, errors={"base": "unknown"}
+                )
         await self.async_set_unique_id(DOMAIN)
         return self.async_create_entry(
             title="Dwellant Packages",
@@ -270,16 +339,52 @@ class DwellantOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(step_id="add_imap", data_schema=IMAP_SCHEMA)
 
     async def async_step_add_imap(self, user_input=None):
-        """Optional IMAP for the just-added user (blank password = skip)."""
+        """Optional IMAP for the just-added user (blank password = skip).
+
+        Validated live so a bad app password fails here, not silently later.
+        """
         if not getattr(self, "_pending_user", None):
             return self.async_abort(reason="unknown")
         if user_input is None:
             return self.async_show_form(step_id="add_imap", data_schema=IMAP_SCHEMA)
         email = self._pending_user[CONF_EMAIL]
         imap_fields = _imap_fields(user_input, fallback_email=email)
+        password = str(imap_fields.get(CONF_IMAP_PASSWORD) or "")
+        if password:
+            try:
+                await _validate_imap(
+                    str(imap_fields.get(CONF_IMAP_HOST) or DEFAULT_IMAP_HOST),
+                    str(imap_fields.get(CONF_IMAP_USERNAME) or email),
+                    password,
+                )
+            except InvalidAuth:
+                return self.async_show_form(
+                    step_id="add_imap",
+                    data_schema=IMAP_SCHEMA,
+                    errors={"base": "invalid_auth"},
+                )
+            except CannotConnect:
+                return self.async_show_form(
+                    step_id="add_imap",
+                    data_schema=IMAP_SCHEMA,
+                    errors={"base": "cannot_connect"},
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected IMAP validation error")
+                return self.async_show_form(
+                    step_id="add_imap",
+                    data_schema=IMAP_SCHEMA,
+                    errors={"base": "unknown"},
+                )
         users = list(self._entry.data.get(CONF_USERS, []))
         users.append(
             _user_entry(email, self._pending_user[CONF_PASSWORD], imap_fields)
+        )
+        _LOGGER.info(
+            "Dwellant IMAP enrichment %s for %s (host=%s)",
+            "enabled" if password else "skipped",
+            email,
+            imap_fields.get(CONF_IMAP_HOST, DEFAULT_IMAP_HOST),
         )
         self.hass.config_entries.async_update_entry(
             self._entry, data={**self._entry.data, CONF_USERS: users}
@@ -315,21 +420,44 @@ class DwellantOptionsFlow(config_entries.OptionsFlow):
             )
             return self.async_show_form(step_id="imap", data_schema=schema)
         target = str(user_input[CONF_EMAIL])
+        password = _normalize_imap_password(user_input.get(CONF_IMAP_PASSWORD) or "")
+        host = str(
+            user_input.get(CONF_IMAP_HOST) or DEFAULT_IMAP_HOST
+        ).strip()
+        username = str(user_input.get(CONF_IMAP_USERNAME) or target).strip()
+        if password:
+            # Validate live: a rejected app password fails here with a clear
+            # error instead of silently every poll. Blank = disable, no check.
+            try:
+                await _validate_imap(host, username, password)
+            except InvalidAuth:
+                return self.async_show_form(
+                    step_id="imap",
+                    data_schema=vol.Schema({}),
+                    errors={"base": "invalid_auth"},
+                )
+            except CannotConnect:
+                return self.async_show_form(
+                    step_id="imap",
+                    data_schema=vol.Schema({}),
+                    errors={"base": "cannot_connect"},
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected IMAP validation error")
+                return self.async_show_form(
+                    step_id="imap",
+                    data_schema=vol.Schema({}),
+                    errors={"base": "unknown"},
+                )
         updated = []
         for u in users:
             if str(u.get(CONF_EMAIL, "")) == target:
                 entry = dict(u)
-                entry[CONF_IMAP_HOST] = str(
-                    user_input.get(CONF_IMAP_HOST) or DEFAULT_IMAP_HOST
-                ).strip()
-                username = str(
-                    user_input.get(CONF_IMAP_USERNAME) or target
-                ).strip()
+                entry[CONF_IMAP_HOST] = host
                 if username:
                     entry[CONF_IMAP_USERNAME] = username
                 else:
                     entry.pop(CONF_IMAP_USERNAME, None)
-                password = str(user_input.get(CONF_IMAP_PASSWORD) or "")
                 if password:
                     entry[CONF_IMAP_PASSWORD] = password
                 else:
@@ -338,6 +466,12 @@ class DwellantOptionsFlow(config_entries.OptionsFlow):
                 updated.append(entry)
             else:
                 updated.append(u)
+        _LOGGER.info(
+            "Dwellant IMAP enrichment %s for %s (host=%s)",
+            "enabled" if password else "disabled",
+            target,
+            host,
+        )
         self.hass.config_entries.async_update_entry(
             self._entry, data={**self._entry.data, CONF_USERS: updated}
         )

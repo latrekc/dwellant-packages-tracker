@@ -19,6 +19,9 @@ from homeassistant.helpers.selector import (
 from .api import CannotConnect, DwellantClient, InvalidAuth
 from .const import (
     CONF_EMAIL,
+    CONF_IMAP_HOST,
+    CONF_IMAP_PASSWORD,
+    CONF_IMAP_USERNAME,
     CONF_NOTIFY_ARRIVAL,
     CONF_NOTIFY_COLLECTION,
     CONF_PASSWORD,
@@ -30,6 +33,7 @@ from .const import (
     MAX_SCAN_MINUTES,
     MIN_SCAN_MINUTES,
 )
+from .gmail import DEFAULT_IMAP_HOST
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +49,45 @@ USER_SCHEMA = vol.Schema(
         ),
     }
 )  # Portal address + org ID are discovered at login, not configured.
+
+IMAP_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_IMAP_HOST, default=DEFAULT_IMAP_HOST): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.TEXT)
+        ),
+        vol.Optional(CONF_IMAP_USERNAME, default=""): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.EMAIL, autocomplete="email")
+        ),
+        # Gmail App Password (https://myaccount.google.com/apppasswords).
+        # Empty = description enrichment disabled for this user.
+        vol.Optional(CONF_IMAP_PASSWORD, default=""): TextSelector(
+            TextSelectorConfig(
+                type=TextSelectorType.PASSWORD, autocomplete="new-password"
+            )
+        ),
+    }
+)
+
+
+def _imap_fields(user_input: dict, fallback_email: str = "") -> dict:
+    """Extract optional IMAP settings (blank password = disabled)."""
+    host = str(user_input.get(CONF_IMAP_HOST) or DEFAULT_IMAP_HOST).strip()
+    username = str(
+        user_input.get(CONF_IMAP_USERNAME) or fallback_email
+    ).strip()
+    password = str(user_input.get(CONF_IMAP_PASSWORD) or "")
+    fields = {CONF_IMAP_HOST: host}
+    if username:
+        fields[CONF_IMAP_USERNAME] = username
+    if password:
+        fields[CONF_IMAP_PASSWORD] = password
+    return fields
+
+
+def _user_entry(email: str, password: str, imap_fields: dict) -> dict:
+    entry = {CONF_EMAIL: email, CONF_PASSWORD: password}
+    entry.update(imap_fields)
+    return entry
 
 
 async def _validate_login(hass: HomeAssistant, email: str, password: str) -> None:
@@ -85,11 +128,30 @@ class DwellantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_show_form(
                 step_id="user", data_schema=USER_SCHEMA, errors={"base": "unknown"}
             )
+        # Portal login OK: stash credentials and ask for optional IMAP.
+        self._pending_user = {
+            CONF_EMAIL: email,
+            CONF_PASSWORD: user_input[CONF_PASSWORD],
+        }
+        return self.async_show_form(step_id="imap", data_schema=IMAP_SCHEMA)
+
+    async def async_step_imap(self, user_input=None):
+        """Optional IMAP enrichment (server-side SEARCH, blank = skip)."""
+        if not hasattr(self, "_pending_user"):
+            return self.async_abort(reason="unknown")
+        if user_input is None:
+            return self.async_show_form(step_id="imap", data_schema=IMAP_SCHEMA)
+        email = self._pending_user[CONF_EMAIL]
+        imap_fields = _imap_fields(user_input, fallback_email=email)
         await self.async_set_unique_id(DOMAIN)
         return self.async_create_entry(
             title="Dwellant Packages",
             data={
-                CONF_USERS: [{CONF_EMAIL: email, CONF_PASSWORD: user_input[CONF_PASSWORD]}],
+                CONF_USERS: [
+                    _user_entry(
+                        email, self._pending_user[CONF_PASSWORD], imap_fields
+                    )
+                ],
                 CONF_SCAN_INTERVAL: 5,
                 CONF_RETENTION_DAYS: DEFAULT_RETENTION_DAYS,
                 CONF_NOTIFY_ARRIVAL: True,
@@ -166,7 +228,7 @@ class DwellantOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["add_user", "remove_user", "settings"],
+            menu_options=["add_user", "remove_user", "imap", "settings"],
         )
 
     async def async_step_add_user(self, user_input=None):
@@ -201,10 +263,83 @@ class DwellantOptionsFlow(config_entries.OptionsFlow):
             return self.async_show_form(
                 step_id="add_user", data_schema=USER_SCHEMA, errors={"base": "unknown"}
             )
+        self._pending_user = {
+            CONF_EMAIL: email,
+            CONF_PASSWORD: user_input[CONF_PASSWORD],
+        }
+        return self.async_show_form(step_id="add_imap", data_schema=IMAP_SCHEMA)
+
+    async def async_step_add_imap(self, user_input=None):
+        """Optional IMAP for the just-added user (blank password = skip)."""
+        if not getattr(self, "_pending_user", None):
+            return self.async_abort(reason="unknown")
+        if user_input is None:
+            return self.async_show_form(step_id="add_imap", data_schema=IMAP_SCHEMA)
+        email = self._pending_user[CONF_EMAIL]
+        imap_fields = _imap_fields(user_input, fallback_email=email)
         users = list(self._entry.data.get(CONF_USERS, []))
-        users.append({CONF_EMAIL: email, CONF_PASSWORD: user_input[CONF_PASSWORD]})
+        users.append(
+            _user_entry(email, self._pending_user[CONF_PASSWORD], imap_fields)
+        )
         self.hass.config_entries.async_update_entry(
             self._entry, data={**self._entry.data, CONF_USERS: users}
+        )
+        self._pending_user = None
+        return self.async_create_entry(title="", data={})
+
+    async def async_step_imap(self, user_input=None):
+        """Add/update IMAP enrichment for an existing user."""
+        users = self._entry.data.get(CONF_USERS, [])
+        if not users:
+            return self.async_abort(reason="no_users")
+        emails = [str(u.get(CONF_EMAIL, "")) for u in users]
+        if user_input is None or CONF_EMAIL not in user_input:
+            schema = vol.Schema(
+                {
+                    vol.Required(CONF_EMAIL): vol.In(emails),
+                    vol.Optional(
+                        CONF_IMAP_HOST, default=DEFAULT_IMAP_HOST
+                    ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
+                    vol.Optional(CONF_IMAP_USERNAME, default=""): TextSelector(
+                        TextSelectorConfig(
+                            type=TextSelectorType.EMAIL, autocomplete="email"
+                        )
+                    ),
+                    vol.Optional(CONF_IMAP_PASSWORD, default=""): TextSelector(
+                        TextSelectorConfig(
+                            type=TextSelectorType.PASSWORD,
+                            autocomplete="new-password",
+                        )
+                    ),
+                }
+            )
+            return self.async_show_form(step_id="imap", data_schema=schema)
+        target = str(user_input[CONF_EMAIL])
+        updated = []
+        for u in users:
+            if str(u.get(CONF_EMAIL, "")) == target:
+                entry = dict(u)
+                entry[CONF_IMAP_HOST] = str(
+                    user_input.get(CONF_IMAP_HOST) or DEFAULT_IMAP_HOST
+                ).strip()
+                username = str(
+                    user_input.get(CONF_IMAP_USERNAME) or target
+                ).strip()
+                if username:
+                    entry[CONF_IMAP_USERNAME] = username
+                else:
+                    entry.pop(CONF_IMAP_USERNAME, None)
+                password = str(user_input.get(CONF_IMAP_PASSWORD) or "")
+                if password:
+                    entry[CONF_IMAP_PASSWORD] = password
+                else:
+                    # Blank password = disable enrichment for this user.
+                    entry.pop(CONF_IMAP_PASSWORD, None)
+                updated.append(entry)
+            else:
+                updated.append(u)
+        self.hass.config_entries.async_update_entry(
+            self._entry, data={**self._entry.data, CONF_USERS: updated}
         )
         return self.async_create_entry(title="", data={})
 

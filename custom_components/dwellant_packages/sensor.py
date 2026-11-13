@@ -76,8 +76,9 @@ def _sorted_packages(available: dict) -> list[dict]:
             p.get("code") or "",
         )
     )
-    return [
-        {
+    out = []
+    for p in pkgs:
+        item = {
             "code": p.get("code"),
             "unit": p.get("unit"),
             "type": p.get("type"),
@@ -86,8 +87,10 @@ def _sorted_packages(available: dict) -> list[dict]:
             "concierge": p.get("concierge"),
             "icon": p.get("icon"),
         }
-        for p in pkgs
-    ]
+        if p.get("description"):
+            item["description"] = p.get("description")
+        out.append(item)
+    return out
 
 
 class DwellantPackagesSensor(CoordinatorEntity[DwellantCoordinator], SensorEntity):
@@ -133,20 +136,23 @@ class DwellantPackagesSensor(CoordinatorEntity[DwellantCoordinator], SensorEntit
             reverse=True,
         )
         units = sorted({p.get("unit") for p in available.values() if p.get("unit")})
+        collected_attrs = []
+        for i in collected:
+            item = {
+                "code": i.get("code"),
+                "unit": i.get("unit"),
+                "type": i.get("type"),
+                "delivery_time": i.get("delivery_time"),
+                "delivery_time_raw": i.get("delivery_time_raw"),
+                "concierge": i.get("concierge"),
+                "collected_at": i.get("collected_at"),
+            }
+            if i.get("description"):
+                item["description"] = i.get("description")
+            collected_attrs.append(item)
         return {
             ATTR_PACKAGES: _sorted_packages(available),
-            ATTR_COLLECTED: [
-                {
-                    "code": i.get("code"),
-                    "unit": i.get("unit"),
-                    "type": i.get("type"),
-                    "delivery_time": i.get("delivery_time"),
-                    "delivery_time_raw": i.get("delivery_time_raw"),
-                    "concierge": i.get("concierge"),
-                    "collected_at": i.get("collected_at"),
-                }
-                for i in collected
-            ],
+            ATTR_COLLECTED: collected_attrs,
             ATTR_UNIT: ", ".join(units),
             ATTR_EMAIL: self.coordinator.user_email(self._email_key),
             ATTR_ORG_ID: self.coordinator.user_org_id(self._email_key),

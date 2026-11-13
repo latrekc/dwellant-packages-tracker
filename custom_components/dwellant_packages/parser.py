@@ -91,8 +91,35 @@ def parse_available_table(html: str) -> dict[str, dict]:
             "delivery_time": delivered["iso"],
             "delivery_time_raw": delivered["raw"],
             "concierge": concierge,
+            "description": None,
         }
     return packages
+
+
+def extract_gmail_description(html: str) -> str | None:
+    """Extract package description from a Dwellant notification email.
+
+    The description is the last non-empty ``<p>`` (e.g. "A Miele package -
+    DPD" under the QR code). Plain-text fallback: last non-empty line.
+    Empty/missing -> None. Never raises.
+    """
+    try:
+        text = html or ""
+        if "<" in text and ">" in text:
+            soup = BeautifulSoup(text, "html.parser")
+            paras = [
+                " ".join(p.get_text(" ", strip=True).split())
+                for p in soup.find_all("p")
+            ]
+            paras = [p for p in paras if p]
+            # HTML input: the <p>s are authoritative — an empty/whitespace-only
+            # body means "no description", not "the raw markup is the text".
+            return paras[-1] if paras else None
+        lines = [" ".join(ln.split()) for ln in text.splitlines()]
+        lines = [ln for ln in lines if ln]
+        return lines[-1] if lines else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 _ORG_PATTERNS = (

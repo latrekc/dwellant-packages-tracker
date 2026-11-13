@@ -35,6 +35,7 @@ automation:
             {{ trigger.event.data.type }} for {{ trigger.event.data.email }}
             ({{ trigger.event.data.unit }}), delivered
             {{ trigger.event.data.delivery_time_raw or trigger.event.data.delivery_time }}.
+            {% if trigger.event.data.description %}Note: {{ trigger.event.data.description }}{% endif %}
 
   - alias: "Dwellant: per-package collected (optional fan-out)"
     trigger:
@@ -47,3 +48,4 @@ automation:
           message: >-
             {{ trigger.event.data.type }}
             for {{ trigger.event.data.email }} was collected.
+            {% if trigger.event.data.description %}Note: {{ trigger.event.data.description }}{% endif %}

@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from custom_components.dwellant_packages.parser import (  # noqa: E402
+    extract_gmail_description,
     extract_org_id,
     extract_request_verification_token,
     extract_save_nonce,

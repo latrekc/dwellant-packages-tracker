@@ -40,12 +40,14 @@ class DwellantPackagesCard extends HTMLElement {
     const collected = attrs.collected || [];
     const email = attrs.email || "";
     const count = state.state;
+    const showDesc = [...packages, ...collected].some((p) => p.description);
 
     const rows = packages
       .map(
         (p) => `<tr>
           <td>${this._esc(p.type)}</td>
           <td>${this._esc(this._formatWhen(p.delivery_time, p.delivery_time_raw))}</td>
+          ${showDesc ? `<td>${this._esc(p.description || "")}</td>` : ""}
         </tr>`
       )
       .join("");
@@ -56,18 +58,20 @@ class DwellantPackagesCard extends HTMLElement {
           <td>${this._esc(p.type)}</td>
           <td>${this._esc(this._formatWhen(p.delivery_time, p.delivery_time_raw))}</td>
           <td>${this._esc(this._formatWhen(p.collected_at, null))}</td>
+          ${showDesc ? `<td>${this._esc(p.description || "")}</td>` : ""}
         </tr>`
       )
       .join("");
 
     const title = email ? `📦 ${this._esc(email)} (${count})` : `📦 Packages (${count})`;
+    const descHeader = showDesc ? `<th>Note</th>` : "";
     this.innerHTML = `
       <ha-card header="${title}">
         <div class="card-content">
           ${
             packages.length
               ? `<table>
-                  <thead><tr><th>Type</th><th>Delivered</th></tr></thead>
+                  <thead><tr><th>Type</th><th>Delivered</th>${descHeader}</tr></thead>
                   <tbody>${rows}</tbody>
                 </table>`
               : `<p class="empty">No packages waiting. 🎉</p>`
@@ -77,7 +81,7 @@ class DwellantPackagesCard extends HTMLElement {
               ? `<details>
                   <summary>Collected (${collected.length})</summary>
                   <table>
-                    <thead><tr><th>Type</th><th>Delivered</th><th>Collected</th></tr></thead>
+                    <thead><tr><th>Type</th><th>Delivered</th><th>Collected</th>${descHeader}</tr></thead>
                     <tbody>${collectedRows}</tbody>
                   </table>
                 </details>`

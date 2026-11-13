@@ -16,6 +16,24 @@
           "email": "Email or display name",
           "password": "Password"
         }
+      },
+      "imap": {
+        "title": "Package descriptions via email",
+        "description": "Optional: connect to your inbox with an app password so the integration can look up the concierge note (last paragraph) for each collection code. Server-side search only — just the matching emails are read. Leave the app password blank to skip.",
+        "data": {
+          "imap_host": "IMAP host",
+          "imap_username": "IMAP username (defaults to your Dwellant email)",
+          "imap_password": "App password (blank = skip)"
+        }
+      },
+      "add_imap": {
+        "title": "Package descriptions via email",
+        "description": "Optional: connect to your inbox with an app password so the integration can look up the concierge note (last paragraph) for each collection code. Server-side search only — just the matching emails are read. Leave the app password blank to skip.",
+        "data": {
+          "imap_host": "IMAP host",
+          "imap_username": "IMAP username (defaults to your Dwellant email)",
+          "imap_password": "App password (blank = skip)"
+        }
       }
     },
     "error": {
@@ -38,6 +56,7 @@
         "menu_options": {
           "add_user": "Add user",
           "remove_user": "Remove user",
+          "imap": "Package descriptions via email",
           "settings": "Polling and notifications"
         }
       },
@@ -54,6 +73,16 @@
         "description": "Remove a portal user and its entities. Removing the last user deletes the integration.",
         "data": {
           "email": "User to remove"
+        }
+      },
+      "imap": {
+        "title": "Package descriptions via email",
+        "description": "Add or update inbox lookup for a user. Blank app password disables it.",
+        "data": {
+          "email": "User",
+          "imap_host": "IMAP host",
+          "imap_username": "IMAP username",
+          "imap_password": "App password (blank = disable)"
         }
       },
       "settings": {

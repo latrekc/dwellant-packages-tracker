@@ -15,6 +15,7 @@ from .const import (
     ATTR_BASE_URL,
     ATTR_COLLECTED,
     ATTR_EMAIL,
+    ATTR_EMAIL_FOUND,
     ATTR_LAST_UPDATED,
     ATTR_ORG_ID,
     ATTR_PACKAGES,
@@ -86,6 +87,7 @@ def _sorted_packages(available: dict) -> list[dict]:
             "delivery_time_raw": p.get("delivery_time_raw"),
             "concierge": p.get("concierge"),
             "icon": p.get("icon"),
+            ATTR_EMAIL_FOUND: bool(p.get("email_found")),
         }
         if p.get("description"):
             item["description"] = p.get("description")
@@ -146,6 +148,7 @@ class DwellantPackagesSensor(CoordinatorEntity[DwellantCoordinator], SensorEntit
                 "delivery_time_raw": i.get("delivery_time_raw"),
                 "concierge": i.get("concierge"),
                 "collected_at": i.get("collected_at"),
+                ATTR_EMAIL_FOUND: bool(i.get("email_found")),
             }
             if i.get("description"):
                 item["description"] = i.get("description")

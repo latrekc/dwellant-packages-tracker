@@ -46,7 +46,7 @@ def test_client_disabled_without_password():
     client = ImapEnrichmentClient("user@example.com", {})
     assert client.enabled is False
     result = asyncio.run(client.async_fetch_descriptions(["ABC123"]))
-    assert result == {"ABC123": None}
+    assert result == {"ABC123": {"email_found": False, "description": None}}
 
 
 def test_client_searches_server_side_and_extracts():
@@ -69,7 +69,9 @@ def test_client_searches_server_side_and_extracts():
         )
         result = asyncio.run(client.async_fetch_descriptions(["R4G3D6"]))
 
-    assert result == {"R4G3D6": "A Miele package - DPD"}
+    assert result == {
+        "R4G3D6": {"email_found": True, "description": "A Miele package - DPD"}
+    }
     # Server-side SEARCH carried the code — no bulk fetch.
     search_call = fake_imap.uid.call_args_list[0]
     assert search_call.args[0] == "SEARCH"
@@ -89,4 +91,33 @@ def test_client_fail_open_on_login_error():
         )
         result = asyncio.run(client.async_fetch_descriptions(["XYZ"]))
 
-    assert result == {"XYZ": None}
+    assert result == {"XYZ": {"email_found": False, "description": None}}
+
+
+def test_client_flags_email_found_even_when_note_empty():
+    """An email containing the code but no note -> found, description None."""
+    msg = EmailMessage()
+    msg["Subject"] = "Package received EMPTY01"
+    msg.set_content("plain fallback")
+    msg.add_alternative(
+        "<html><body><div>reference code EMPTY01</div></body></html>",
+        subtype="html",
+    )
+    raw = msg.as_bytes()
+
+    fake_imap = MagicMock()
+    fake_imap.uid.side_effect = [
+        ("OK", [b"7"]),  # SEARCH -> one UID
+        ("OK", [(b"7 (BODY[] {...}", raw)]),  # FETCH -> body has code, empty note
+    ]
+
+    with patch(
+        "custom_components.dwellant_packages.gmail.imaplib.IMAP4_SSL",
+        return_value=fake_imap,
+    ):
+        client = ImapEnrichmentClient(
+            "user@example.com", {"imap_password": "app-pass"}
+        )
+        result = asyncio.run(client.async_fetch_descriptions(["EMPTY01"]))
+
+    assert result == {"EMPTY01": {"email_found": True, "description": None}}

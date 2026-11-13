@@ -58,9 +58,16 @@ def _imap_blocking_search(
     username: str,
     password: str,
     codes: list[str],
-) -> dict[str, str | None]:
-    """Blocking IMAP search+fetch. Runs in an executor thread."""
-    results: dict[str, str | None] = {code: None for code in codes}
+) -> dict[str, dict]:
+    """Blocking IMAP search+fetch. Runs in an executor thread.
+
+    Returns {code: {"email_found": bool, "description": str | None}}.
+    email_found=True means an email containing the code was located
+    (description may still be None when the note is empty).
+    """
+    results: dict[str, dict] = {
+        code: {"email_found": False, "description": None} for code in codes
+    }
     try:
         imap = imaplib.IMAP4_SSL(host, timeout=30)
     except Exception as err:  # noqa: BLE001
@@ -101,7 +108,10 @@ def _imap_blocking_search(
                     if code not in body:
                         continue
                     desc = extract_gmail_description(body)
-                    results[code] = desc  # None when empty -> cached negative
+                    results[code] = {
+                        "email_found": True,
+                        "description": desc,  # None when empty -> flag still True
+                    }
                     break
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("IMAP search for code %s failed: %s", code, err)
@@ -134,13 +144,16 @@ class ImapEnrichmentClient:
 
     async def async_fetch_descriptions(
         self, codes: list[str]
-    ) -> dict[str, str | None]:
-        """SEARCH inbox for each code, return {code: description-or-None}.
+    ) -> dict[str, dict]:
+        """SEARCH inbox for each code.
 
-        Never raises: on any failure every code maps to None.
+        Returns {code: {"email_found": bool, "description": str | None}}.
+        Never raises: on any failure every code maps to email_found=False.
         """
         if not self.enabled or not codes:
-            return {code: None for code in codes}
+            return {
+                code: {"email_found": False, "description": None} for code in codes
+            }
         try:
             return await asyncio.to_thread(
                 _imap_blocking_search,
@@ -151,4 +164,6 @@ class ImapEnrichmentClient:
             )
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("IMAP enrichment failed for %s: %s", self.email, err)
-            return {code: None for code in codes}
+            return {
+                code: {"email_found": False, "description": None} for code in codes
+            }

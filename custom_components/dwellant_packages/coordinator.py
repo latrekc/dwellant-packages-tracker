@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import CannotConnect, DwellantClient, InvalidAuth, SessionExpired
 from .const import (
+    ATTR_EMAIL_FOUND,
     COLLECTED_RECENT_HOURS,
     CONF_IMAP_HOST,
     CONF_IMAP_PASSWORD,
@@ -136,9 +137,15 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
         # only (re)created or dismissed when its content CHANGES — otherwise a
         # dismissed notification would pop back on every poll.
         self._digest_hashes: dict[str, str | None] = {}
-        # IMAP enrichment cache: code -> description (None = searched, no note).
-        # Persisted alongside state so restarts don't re-search the inbox.
-        self._gmail_cache: dict[str, str | None] = {}
+        # IMAP enrichment: email_found flag per code (True once an email
+        # containing the code is located, even when its note is empty).
+        # The in-memory cache restarts empty so HA reload re-searches all
+        # codes, including known and collected ones; within a run each code
+        # is searched once (fail-open).
+        self._gmail_cache: dict[str, dict] = {}
+        # Codes whose inbox email already arrived this run (persisted via
+        # the email_found flag in state); skipped by later polls this run.
+        self._gmail_searched: set[str] = set()
 
     def _sync_clients(self) -> None:
         """Create/drop per-user clients to match entry users (no YAML)."""
@@ -167,7 +174,12 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
         stored = await self._store.async_load()
         if isinstance(stored, dict):
             self.data = stored
-            self._restore_gmail_cache(stored)
+            # NOTE: the search cache intentionally restarts empty so HA reload
+            # re-searches ALL codes (available + collected history). Within a
+            # run only unsearched codes are queried per poll.
+        opts = _options(self._entry)
+        self.update_interval = timedelta(minutes=opts[CONF_SCAN_INTERVAL])
+        await self.async_config_entry_first_refresh()
         opts = _options(self._entry)
         self.update_interval = timedelta(minutes=opts[CONF_SCAN_INTERVAL])
         await self.async_config_entry_first_refresh()
@@ -231,35 +243,33 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
             return client if client.enabled else None
         return None
 
-    def _restore_gmail_cache(self, stored: dict) -> None:
-        """Seed the in-memory code->description cache from persisted state."""
-        cache: dict[str, str | None] = {}
-        if isinstance(stored, dict):
-            for state in stored.values():
-                if not isinstance(state, dict):
-                    continue
-                for section in ("available", "history"):
-                    items = state.get(section, {})
-                    if not isinstance(items, dict):
-                        continue
-                    for code, pkg in items.items():
-                        if isinstance(pkg, dict) and "description" in pkg:
-                            cache.setdefault(str(code), pkg.get("description"))
-        self._gmail_cache = cache
-
     async def _async_enrich_descriptions(
         self, email_key: str, fetched: dict[str, dict]
     ) -> dict[str, dict]:
-        """Overlay IMAP descriptions for codes not yet in the cache.
+        """Overlay IMAP descriptions for codes whose email hasn't arrived.
 
-        Server-side SEARCH per unknown code; results (including None for
-        no-match/empty) are cached so each code is searched once. Fail-open:
-        never raises, returns fetched unchanged on any problem.
+        On HA reload the search set restarts empty, so available codes AND
+        collected-history codes are re-searched. Within a run, codes already
+        flagged email_found (persisted) or searched this run are skipped.
+        Collected codes whose email was never found are re-searched too, so
+        late-arriving emails are picked up. Fail-open: never raises.
         """
         client = self._imap_client_for(email_key)
         if client is None:
             return fetched
-        unknown = [c for c in fetched if c not in self._gmail_cache]
+        previous = self.data.get(email_key, {})
+        prev_history = previous.get("history", {}) if isinstance(previous, dict) else {}
+        codes: set[str] = set(fetched)
+        if isinstance(prev_history, dict):
+            codes.update(
+                c for c in prev_history if isinstance(prev_history.get(c), dict)
+            )
+        unknown = [
+            c
+            for c in sorted(codes)
+            if c not in self._gmail_searched
+            and not self._email_found(previous, c)
+        ]
         if unknown:
             try:
                 found = await client.async_fetch_descriptions(unknown)
@@ -267,13 +277,31 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
                 _LOGGER.debug("IMAP enrichment failed for %s", email_key)
                 return fetched
             self._gmail_cache.update(found)
+            self._gmail_searched.update(unknown)
         enriched: dict[str, dict] = {}
         for code, pkg in fetched.items():
             item = dict(pkg)
-            if item.get("description") is None and code in self._gmail_cache:
-                item["description"] = self._gmail_cache[code]
+            cached = self._gmail_cache.get(code, {})
+            if isinstance(cached, dict):
+                if item.get("description") is None and cached.get("description") is not None:
+                    item["description"] = cached["description"]
+                if "email_found" not in item and cached.get("email_found") is not None:
+                    item["email_found"] = cached["email_found"]
             enriched[code] = item
         return enriched
+
+    @staticmethod
+    def _email_found(previous: dict, code: str) -> bool:
+        """True when a prior poll already located the inbox email for code."""
+        if not isinstance(previous, dict):
+            return False
+        for section in ("available", "history"):
+            items = previous.get(section, {})
+            if isinstance(items, dict):
+                pkg = items.get(code)
+                if isinstance(pkg, dict) and pkg.get("email_found"):
+                    return True
+        return False
 
     def _fire_events(
         self,
@@ -304,6 +332,7 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
                     "delivery_time_raw": pkg.get("delivery_time_raw"),
                     "concierge": pkg.get("concierge"),
                     "description": pkg.get("description"),
+                    ATTR_EMAIL_FOUND: bool(pkg.get("email_found")),
                 },
             )
         for pkg in collected:
@@ -319,6 +348,7 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
                     "delivery_time_raw": pkg.get("delivery_time_raw"),
                     "collected_at": pkg.get("collected_at"),
                     "description": pkg.get("description"),
+                    ATTR_EMAIL_FOUND: bool(pkg.get("email_found")),
                 },
             )
         hass.bus.async_fire(

@@ -97,3 +97,19 @@ def test_description_overwrite_and_collected_retention():
     state2, _, collected = merge_user_state(state, {}, 30, _ts())
     assert collected[0]["description"] == "new note"
     assert state2["history"]["AAA"]["description"] == "new note"
+
+
+def test_email_found_flag_sticky():
+    prev = {
+        "available": {"AAA": {**PKG_A, "email_found": True, "description": None}},
+        "history": {"AAA": {**PKG_A, "status": "available", "email_found": True}},
+    }
+    fetched = {"AAA": dict(PKG_A)}  # portal fetch carries no flag
+    state, _, _ = merge_user_state(prev, fetched, 30, _ts())
+    assert state["available"]["AAA"]["email_found"] is True
+    assert state["history"]["AAA"]["email_found"] is True
+
+
+def test_email_found_defaults_absent():
+    state, _, _ = merge_user_state(None, {"AAA": PKG_A}, 30, _ts())
+    assert "email_found" not in state["available"]["AAA"]

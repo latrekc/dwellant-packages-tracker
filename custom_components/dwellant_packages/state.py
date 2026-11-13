@@ -29,12 +29,18 @@ def _coerce_ts(timestamp: str | None) -> datetime | None:
 def _with_preserved_description(
     pkg: dict, prev_avail: dict, prev_hist: dict
 ) -> dict:
-    """Copy of pkg with prior description re-attached when fetch lacks one."""
+    """Copy of pkg with prior description/flag re-attached when fetch lacks them."""
     merged = dict(pkg)
     if merged.get("description") is None:
         prev_desc = prev_hist.get("description") or prev_avail.get("description")
         if prev_desc is not None:
             merged["description"] = prev_desc
+    if "email_found" not in merged:
+        prev_flag = prev_hist.get("email_found")
+        if prev_flag is None:
+            prev_flag = prev_avail.get("email_found")
+        if prev_flag is not None:
+            merged["email_found"] = prev_flag
     return merged
 
 
@@ -115,7 +121,8 @@ def merge_user_state(
         item = dict(history.get(code, {}))
         # Preserve a previously known description across polls when the fresh
         # portal fetch lacks one (IMAP enrichment may transiently fail).
-        # A fresh non-None description always wins.
+        # A fresh non-None description always wins. email_found is sticky the
+        # same way: once an email is located it stays flagged.
         prev_desc = (
             history.get(code, {}).get("description")
             or prev_available.get(code, {}).get("description")
@@ -123,6 +130,12 @@ def merge_user_state(
         item.update(pkg)
         if item.get("description") is None and prev_desc is not None:
             item["description"] = prev_desc
+        if "email_found" not in item:
+            prev_flag = history.get(code, {}).get("email_found")
+            if prev_flag is None:
+                prev_flag = prev_available.get(code, {}).get("email_found")
+            if prev_flag is not None:
+                item["email_found"] = prev_flag
         item.update(
             {
                 "code": code,

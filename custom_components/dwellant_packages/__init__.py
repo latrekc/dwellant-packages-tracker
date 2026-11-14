@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from ha_deploy_kit.ha import (
     async_clear_restart_issue,
     async_register_restart_service,
-    register_card_serving,
+    async_setup_frontend,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -17,7 +15,7 @@ from homeassistant.helpers import storage
 from .const import DOMAIN, PLATFORMS, STORAGE_VERSION
 from .coordinator import DwellantCoordinator
 
-CARD_URL = "/dwellant_packages/dwellant-packages-card.js"
+CARD_FILENAME = "dwellant-packages-card.js"
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -26,11 +24,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     The service is registered idempotently with an empty schema and raises a
     one-click (fixable) "Restart required" Repairs issue — the deploy script
     calls it over the HA API after a backend change. The card is served from
-    the component's ``lovelace`` dir at a stable URL.
+    the component's ``www`` dir with content-hashed cache busting (dev
+    channel) or version pinning (release); see ha-deploy-kit's
+    ``async_setup_frontend``.
     """
     async_register_restart_service(hass, DOMAIN, fixable=True)
-    lovelace_dir = str(Path(__file__).parent / "lovelace")
-    register_card_serving(hass, DOMAIN, lovelace_dir, CARD_URL)
+    await async_setup_frontend(hass, domain=DOMAIN, card_filename=CARD_FILENAME)
     return True
 
 

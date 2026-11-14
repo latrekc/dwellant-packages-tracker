@@ -29,7 +29,7 @@ automatically at login (central sign-in + org parsed from the authorized page).
    internal tracking keys) plus one `dwellant_packages_update` count event per
    poll. Both notification halves toggleable. See `automations.example.yaml`
    and `blueprints/`.
-5. **Card:** `custom_components/dwellant_packages/lovelace/dwellant-packages-card.js`
+5. **Card:** `custom_components/dwellant_packages/www/dwellant-packages-card.js`
    — per-user table (type + delivered with relative time like "5 hours ago",
    codes/concierge never shown); collected history shows type + dates only.
 

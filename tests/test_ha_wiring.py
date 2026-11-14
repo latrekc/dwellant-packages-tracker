@@ -50,6 +50,19 @@ def test_async_setup_registers_fixable_service_and_serves_card(monkeypatch):
     assert fe_kwargs.get("card_filename") == init_mod.CARD_FILENAME
 
 
+def test_card_js_keeps_collected_open_across_rerenders():
+    # HA pushes `hass` on every entity change; re-rendering must not collapse
+    # the expanded Collected <details>. Guard the change-detection skip and
+    # the open-state preservation (mirrors ha-kids-learning-tracker 7f46fd6).
+    source = (
+        ROOT / "custom_components" / "dwellant_packages" / "www"
+        / "dwellant-packages-card.js"
+    ).read_text(encoding="utf-8")
+    assert "previous.states[id] === hass.states[id]" in source
+    assert "details.dp-collected" in source
+    assert "d.open = true" in source
+
+
 def test_entry_setup_clears_restart_issue(monkeypatch):
     cleared = []
     monkeypatch.setattr(

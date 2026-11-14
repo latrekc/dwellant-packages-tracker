@@ -16,7 +16,15 @@ class DwellantPackagesCard extends HTMLElement {
   }
 
   set hass(hass) {
+    const previous = this._hass;
     this._hass = hass;
+    const id = this._config && this._config.entity;
+    // HA pushes `hass` on every entity's change. Re-render only when our own
+    // entity object actually changed, so unrelated updates don't keep wiping
+    // the DOM (which was collapsing the expanded Collected section instantly).
+    if (this._rendered && id && previous && previous.states[id] === hass.states[id]) {
+      return;
+    }
     this._render();
   }
 
@@ -30,9 +38,15 @@ class DwellantPackagesCard extends HTMLElement {
 
   _render() {
     if (!this._hass || !this._config) return;
+    // Preserve the expanded Collected section across re-renders.
+    const openCollected = (() => {
+      const d = this.querySelector("details.dp-collected");
+      return d ? d.open : false;
+    })();
     const state = this._hass.states[this._config.entity];
     if (!state) {
       this.innerHTML = `<ha-card header="Dwellant Packages"><div class="card-content">Entity not found: ${this._config.entity}</div></ha-card>`;
+      this._rendered = true;
       return;
     }
     const attrs = state.attributes || {};
@@ -78,7 +92,7 @@ class DwellantPackagesCard extends HTMLElement {
           }
           ${
             this._config.show_collected && collected.length
-              ? `<details>
+              ? `<details class="dp-collected">
                   <summary>Collected (${collected.length})</summary>
                   <table>
                     <thead><tr><th>Type</th><th>Delivered</th><th>Collected</th>${descHeader}</tr></thead>
@@ -96,6 +110,11 @@ class DwellantPackagesCard extends HTMLElement {
         details { margin-top: 12px; }
         summary { cursor: pointer; opacity: 0.8; }
       </style>`;
+    if (openCollected) {
+      const d = this.querySelector("details.dp-collected");
+      if (d) d.open = true;
+    }
+    this._rendered = true;
   }
 
   _formatWhen(iso, raw) {

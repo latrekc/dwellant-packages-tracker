@@ -163,17 +163,13 @@ def _imap_blocking_search(
                     from_addr = str(msg.get("From", ""))
                     subject = str(msg.get("Subject", ""))
                     body = _decode_body(msg)
-                    # TEMPORARY full-body dump to verify the parser against
-                    # the real template (remove before release).
                     _LOGGER.debug(
-                        "IMAP FETCH code=%s uid=%s from=%r subject=%r "
-                        "body_len=%d body=%r",
+                        "IMAP FETCH code=%s uid=%s from=%r subject=%r body_len=%d",
                         code,
                         uid,
                         from_addr,
                         subject,
                         len(body),
-                        body[:4000],
                     )
                     if code not in body:
                         _LOGGER.debug(

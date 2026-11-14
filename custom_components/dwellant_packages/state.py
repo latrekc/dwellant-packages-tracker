@@ -13,6 +13,37 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _coerce_ts(timestamp: str | None) -> datetime | None:
+    """Parse an ISO timestamp for retention; None when unparseable."""
+    if not timestamp:
+        return None
+    try:
+        when = datetime.fromisoformat(str(timestamp))
+    except (ValueError, TypeError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when
+
+
+def _with_preserved_description(
+    pkg: dict, prev_avail: dict, prev_hist: dict
+) -> dict:
+    """Copy of pkg with prior description/flag re-attached when fetch lacks them."""
+    merged = dict(pkg)
+    if merged.get("description") is None:
+        prev_desc = prev_hist.get("description") or prev_avail.get("description")
+        if prev_desc is not None:
+            merged["description"] = prev_desc
+    if "email_found" not in merged:
+        prev_flag = prev_hist.get("email_found")
+        if prev_flag is None:
+            prev_flag = prev_avail.get("email_found")
+        if prev_flag is not None:
+            merged["email_found"] = prev_flag
+    return merged
+
+
 def diff_available(
     old: dict[str, dict], new: dict[str, dict]
 ) -> tuple[list[dict], list[str]]:
@@ -88,7 +119,23 @@ def merge_user_state(
     history = dict(prev_history)
     for code, pkg in fetched.items():
         item = dict(history.get(code, {}))
+        # Preserve a previously known description across polls when the fresh
+        # portal fetch lacks one (IMAP enrichment may transiently fail).
+        # A fresh non-None description always wins. email_found is sticky the
+        # same way: once an email is located it stays flagged.
+        prev_desc = (
+            history.get(code, {}).get("description")
+            or prev_available.get(code, {}).get("description")
+        )
         item.update(pkg)
+        if item.get("description") is None and prev_desc is not None:
+            item["description"] = prev_desc
+        if "email_found" not in item:
+            prev_flag = history.get(code, {}).get("email_found")
+            if prev_flag is None:
+                prev_flag = prev_available.get(code, {}).get("email_found")
+            if prev_flag is not None:
+                item["email_found"] = prev_flag
         item.update(
             {
                 "code": code,
@@ -101,10 +148,15 @@ def merge_user_state(
     for item in collected:
         history[item["code"]] = item
 
-    history = prune_history(history, retention_days)
+    history = prune_history(history, retention_days, now=_coerce_ts(timestamp))
 
     state = {
-        "available": fetched,
+        "available": {
+            code: _with_preserved_description(
+                pkg, prev_available.get(code, {}), prev_history.get(code, {})
+            )
+            for code, pkg in fetched.items()
+        },
         "history": history,
         "last_updated": timestamp,
     }

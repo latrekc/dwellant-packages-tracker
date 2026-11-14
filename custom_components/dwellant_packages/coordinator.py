@@ -9,12 +9,17 @@ from datetime import datetime, timedelta, timezone
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import storage
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import CannotConnect, DwellantClient, InvalidAuth, SessionExpired
 from .const import (
+    ATTR_EMAIL_FOUND,
     COLLECTED_RECENT_HOURS,
+    CONF_IMAP_HOST,
+    CONF_IMAP_PASSWORD,
+    CONF_IMAP_USERNAME,
     CONF_NOTIFY_ARRIVAL,
     CONF_NOTIFY_COLLECTION,
     CONF_PASSWORD,
@@ -29,16 +34,22 @@ from .const import (
     MAX_SCAN_MINUTES,
     MIN_SCAN_MINUTES,
 )
+from .gmail import ImapEnrichmentClient
 from .state import merge_user_state, now_utc
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def _describe_package(pkg: dict, when: str) -> str:
-    """Human summary without collection codes: 'Package (Medium), 18/09/2026 at 15:24'."""
+    """Human summary: 'Package (Medium), 18/09/2026 at 15:24 — A Miele package'.
+
+    Description appended only when present (empty is normal, not an error).
+    """
     type_label = pkg.get("type") or "Package"
     when = (when or "").strip()
-    return f"{type_label}, {when}" if when else str(type_label)
+    base = f"{type_label}, {when}" if when else str(type_label)
+    desc = (pkg.get("description") or "").strip()
+    return f"{base} — {desc}" if desc else base
 
 
 def _format_collected_at(iso_value: str | None) -> str:
@@ -127,6 +138,15 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
         # only (re)created or dismissed when its content CHANGES — otherwise a
         # dismissed notification would pop back on every poll.
         self._digest_hashes: dict[str, str | None] = {}
+        # IMAP enrichment: email_found flag per code (True once an email
+        # containing the code is located, even when its note is empty).
+        # The in-memory cache restarts empty so HA reload re-searches all
+        # codes, including known and collected ones; within a run each code
+        # is searched once (fail-open).
+        self._gmail_cache: dict[str, dict] = {}
+        # Codes whose inbox email already arrived this run (persisted via
+        # the email_found flag in state); skipped by later polls this run.
+        self._gmail_searched: set[str] = set()
 
     def _sync_clients(self) -> None:
         """Create/drop per-user clients to match entry users (no YAML)."""
@@ -155,6 +175,12 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
         stored = await self._store.async_load()
         if isinstance(stored, dict):
             self.data = stored
+            # NOTE: the search cache intentionally restarts empty so HA reload
+            # re-searches ALL codes (available + collected history). Within a
+            # run only unsearched codes are queried per poll.
+        opts = _options(self._entry)
+        self.update_interval = timedelta(minutes=opts[CONF_SCAN_INTERVAL])
+        await self.async_config_entry_first_refresh()
         opts = _options(self._entry)
         self.update_interval = timedelta(minutes=opts[CONF_SCAN_INTERVAL])
         await self.async_config_entry_first_refresh()
@@ -181,6 +207,12 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
                 ) from err
             except CannotConnect as err:
                 raise UpdateFailed(f"Dwellant fetch failed for {email}: {err}") from err
+            # Fail-open IMAP enrichment: overlay descriptions for unknown
+            # codes before merge. Never blocks the portal refresh.
+            try:
+                fetched = await self._async_enrich_descriptions(email, fetched)
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Description enrichment skipped for %s", email)
             previous = self.data.get(email)
             state, arrived, collected = merge_user_state(
                 previous, fetched, opts[CONF_RETENTION_DAYS], timestamp
@@ -195,6 +227,124 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
         except Exception:  # noqa: BLE001
             _LOGGER.warning("Could not persist Dwellant package state", exc_info=True)
         return self.data
+
+    def _imap_client_for(self, email_key: str) -> ImapEnrichmentClient | None:
+        """Build the IMAP client for a user key, or None when not configured."""
+        for user in self._entry.data.get(CONF_USERS, []):
+            if str(user.get("email", "")).strip().lower() != email_key:
+                continue
+            client = ImapEnrichmentClient(
+                email=str(user.get("email", "")),
+                imap_config={
+                    CONF_IMAP_HOST: user.get(CONF_IMAP_HOST),
+                    CONF_IMAP_USERNAME: user.get(CONF_IMAP_USERNAME),
+                    CONF_IMAP_PASSWORD: user.get(CONF_IMAP_PASSWORD),
+                },
+            )
+            return client if client.enabled else None
+        return None
+
+    async def _async_enrich_descriptions(
+        self, email_key: str, fetched: dict[str, dict]
+    ) -> dict[str, dict]:
+        """Overlay IMAP descriptions for codes whose email hasn't arrived.
+
+        On HA reload the search set restarts empty, so available codes AND
+        collected-history codes are re-searched. Within a run, codes already
+        flagged email_found (persisted) or searched this run are skipped.
+        Collected codes whose email was never found are re-searched too, so
+        late-arriving emails are picked up. Fail-open: never raises.
+        """
+        client = self._imap_client_for(email_key)
+        if client is None:
+            return fetched
+        previous = self.data.get(email_key, {})
+        prev_history = previous.get("history", {}) if isinstance(previous, dict) else {}
+        codes: set[str] = set(fetched)
+        if isinstance(prev_history, dict):
+            codes.update(
+                c for c in prev_history if isinstance(prev_history.get(c), dict)
+            )
+        unknown = [
+            c
+            for c in sorted(codes)
+            if c not in self._gmail_searched
+            and not self._email_found(previous, c)
+        ]
+        if unknown:
+            try:
+                found = await client.async_fetch_descriptions(unknown)
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("IMAP enrichment failed for %s", email_key)
+                return fetched
+            self._gmail_cache.update(found)
+            self._gmail_searched.update(unknown)
+            if getattr(client, "auth_failed", False):
+                self._async_raise_imap_auth_issue(email_key, client)
+            else:
+                self._async_clear_imap_auth_issue(email_key)
+            searched = [c for c in unknown if found.get(c, {}).get("email_found")]
+            _LOGGER.info(
+                "IMAP enrichment for %s: searched %d code(s), email found for %d",
+                email_key,
+                len(unknown),
+                len(searched),
+            )
+        enriched: dict[str, dict] = {}
+        for code, pkg in fetched.items():
+            item = dict(pkg)
+            cached = self._gmail_cache.get(code, {})
+            if isinstance(cached, dict):
+                if item.get("description") is None and cached.get("description") is not None:
+                    item["description"] = cached["description"]
+                if "email_found" not in item and cached.get("email_found") is not None:
+                    item["email_found"] = cached["email_found"]
+            enriched[code] = item
+        return enriched
+
+    @staticmethod
+    def _email_found(previous: dict, code: str) -> bool:
+        """True when a prior poll already located the inbox email for code."""
+        if not isinstance(previous, dict):
+            return False
+        for section in ("available", "history"):
+            items = previous.get(section, {})
+            if isinstance(items, dict):
+                pkg = items.get(code)
+                if isinstance(pkg, dict) and pkg.get("email_found"):
+                    return True
+        return False
+
+    def _async_raise_imap_auth_issue(
+        self, email_key: str, client: ImapEnrichmentClient
+    ) -> None:
+        """Surface a bad/revoked app password as a fixable Repairs issue."""
+        try:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                f"imap_auth_{self._entry.entry_id}_{email_key}",
+                is_fixable=True,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="imap_auth_failed",
+                translation_placeholders={
+                    "email": self.user_email(email_key),
+                    "host": client.host,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Could not create IMAP auth issue for %s", email_key)
+
+    def _async_clear_imap_auth_issue(self, email_key: str) -> None:
+        """Clear the IMAP auth issue once login succeeds again."""
+        try:
+            ir.async_delete_issue(
+                self.hass,
+                DOMAIN,
+                f"imap_auth_{self._entry.entry_id}_{email_key}",
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _fire_events(
         self,
@@ -224,6 +374,8 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
                     "delivery_time": pkg.get("delivery_time"),
                     "delivery_time_raw": pkg.get("delivery_time_raw"),
                     "concierge": pkg.get("concierge"),
+                    "description": pkg.get("description"),
+                    ATTR_EMAIL_FOUND: bool(pkg.get("email_found")),
                 },
             )
         for pkg in collected:
@@ -238,6 +390,8 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
                     "delivery_time": pkg.get("delivery_time"),
                     "delivery_time_raw": pkg.get("delivery_time_raw"),
                     "collected_at": pkg.get("collected_at"),
+                    "description": pkg.get("description"),
+                    ATTR_EMAIL_FOUND: bool(pkg.get("email_found")),
                 },
             )
         hass.bus.async_fire(

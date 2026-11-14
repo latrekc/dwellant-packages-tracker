@@ -23,6 +23,12 @@ def table_url_for(base_url: str, org_id: int | str) -> str:
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_USERS = "users"
+# Optional per-user IMAP enrichment (server-side SEARCH, fail-open).
+# imap_host defaults to Gmail; imap_username defaults to the Dwellant email;
+# imap_password is a Gmail App Password (empty = enrichment disabled).
+CONF_IMAP_HOST = "imap_host"
+CONF_IMAP_USERNAME = "imap_username"
+CONF_IMAP_PASSWORD = "imap_password"
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_RETENTION_DAYS = "retention_days"
 CONF_NOTIFY_ARRIVAL = "notify_arrival"
@@ -46,6 +52,8 @@ STATUS_COLLECTED = "collected"
 
 ATTR_PACKAGES = "packages"
 ATTR_COLLECTED = "collected"
+ATTR_DESCRIPTION = "description"
+ATTR_EMAIL_FOUND = "email_found"
 ATTR_UNIT = "unit"
 ATTR_EMAIL = "email"
 ATTR_ORG_ID = "org_id"

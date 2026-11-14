@@ -54,7 +54,7 @@ def test_build_settings_declares_dwellant_identity():
     assert settings.source_root == ROOT
     assert settings.remote_config == "/config"
     assert settings.frontend is not None
-    assert settings.frontend.source_rel == "lovelace/dwellant-packages-card.js"
+    assert settings.frontend.source_rel == "www/dwellant-packages-card.js"
     assert settings.frontend.published_remote == "www/dwellant/dwellant-packages-card.js"
 
 

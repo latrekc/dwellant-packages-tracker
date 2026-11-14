@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from custom_components.dwellant_packages.parser import (  # noqa: E402
+    extract_gmail_description,
     extract_org_id,
     extract_request_verification_token,
     extract_save_nonce,
@@ -72,3 +73,27 @@ def test_extract_org_id():
     assert extract_org_id("") is None
     # Bare /Org/<id>/ link fallback.
     assert extract_org_id('<a href="/Org/12345/Home/Index">x</a>') == 12345
+
+
+def _email_html(note_paragraph: str) -> str:
+    """Minimal Dwellant-style email: boilerplate, QR img, then note."""
+    return (
+        "<html><body><div>"
+        "<p>It arrived at 13/11/2026 18:10 and was accepted by Concierge.</p>"
+        "<p>Your parcel has been registered with reference code G2A2U7 and QR.</p>"
+        "<p><b>Please collect from the Concierge Desk.</b></p>"
+        '<img src="https://example.com/qr" alt="QR Code" />'
+        f"{note_paragraph}"
+        "</div></body></html>"
+    )
+
+
+def test_extract_description_after_qr():
+    html = _email_html("<p>A Miele package - DPD</p>")
+    assert extract_gmail_description(html) == "A Miele package - DPD"
+
+
+def test_extract_description_empty_last_paragraph_is_none():
+    # Template with NO note: trailing <p> is empty -> None (falsy downstream).
+    html = _email_html("<p></p>")
+    assert extract_gmail_description(html) is None

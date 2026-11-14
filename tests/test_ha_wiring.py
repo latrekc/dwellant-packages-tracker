@@ -2,9 +2,10 @@
 
 No ``hass`` fixture is available on this Python, so these verify the *seam*:
 ``async_setup`` registers the restart service (fixable, for the one-click card)
-and serves the card at the integration's URL, and ``repairs.async_create_fix_flow``
-delegates to the library's opt-in restart flow (restart only on explicit submit,
-which is the library's own tested contract).
+and delegates card serving to the kit's ``async_setup_frontend`` (content-hash
+cache busting on dev, version pin on release), and
+``repairs.async_create_fix_flow`` delegates to the library's opt-in restart flow
+(restart only on explicit submit, which is the library's own tested contract).
 """
 
 import asyncio
@@ -19,8 +20,6 @@ import custom_components.dwellant_packages as init_mod
 from custom_components.dwellant_packages import repairs
 from custom_components.dwellant_packages.const import DOMAIN
 
-CARD_URL = "/dwellant_packages/dwellant-packages-card.js"
-
 
 def test_async_setup_registers_fixable_service_and_serves_card(monkeypatch):
     calls = {}
@@ -28,11 +27,12 @@ def test_async_setup_registers_fixable_service_and_serves_card(monkeypatch):
     def fake_register_service(hass, domain, **kwargs):
         calls["service"] = (hass, domain, kwargs)
 
-    def fake_register_card(hass, domain, lovelace_dir, card_url):
-        calls["card"] = (hass, domain, lovelace_dir, card_url)
+    async def fake_setup_frontend(hass, **kwargs):
+        calls["frontend"] = (hass, kwargs)
+        return "http://example/effective.js"
 
     monkeypatch.setattr(init_mod, "async_register_restart_service", fake_register_service)
-    monkeypatch.setattr(init_mod, "register_card_serving", fake_register_card)
+    monkeypatch.setattr(init_mod, "async_setup_frontend", fake_setup_frontend)
 
     hass = MagicMock()
     result = asyncio.run(init_mod.async_setup(hass, {}))
@@ -44,11 +44,23 @@ def test_async_setup_registers_fixable_service_and_serves_card(monkeypatch):
     assert svc_domain == DOMAIN
     assert svc_kwargs.get("fixable") is True  # one-click Repairs card
 
-    card_hass, card_domain, lovelace_dir, card_url = calls["card"]
-    assert card_hass is hass
-    assert card_domain == DOMAIN
-    assert card_url == CARD_URL
-    assert lovelace_dir.endswith("dwellant_packages/lovelace")
+    fe_hass, fe_kwargs = calls["frontend"]
+    assert fe_hass is hass
+    assert fe_kwargs.get("domain") == DOMAIN
+    assert fe_kwargs.get("card_filename") == init_mod.CARD_FILENAME
+
+
+def test_card_js_keeps_collected_open_across_rerenders():
+    # HA pushes `hass` on every entity change; re-rendering must not collapse
+    # the expanded Collected <details>. Guard the change-detection skip and
+    # the open-state preservation (mirrors ha-kids-learning-tracker 7f46fd6).
+    source = (
+        ROOT / "custom_components" / "dwellant_packages" / "www"
+        / "dwellant-packages-card.js"
+    ).read_text(encoding="utf-8")
+    assert "previous.states[id] === hass.states[id]" in source
+    assert "details.dp-collected" in source
+    assert "d.open = true" in source
 
 
 def test_entry_setup_clears_restart_issue(monkeypatch):

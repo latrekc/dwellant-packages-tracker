@@ -7,7 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_USERS, DOMAIN
+from .const import CONF_IMAP_HOST, CONF_IMAP_USERNAME, CONF_USERS, DOMAIN
 from .coordinator import DwellantCoordinator
 
 TO_REDACT = {"password", "cookie", "cookies", "token", "authorization", "set-cookie"}
@@ -27,6 +27,15 @@ async def async_get_config_entry_diagnostics(
                 "email": f"{email[:2]}***" if email else "***",
                 "org_id": coordinator.user_org_id(key),
                 "portal": coordinator.user_base_url(key),
+                "gmail_linked": bool(user.get("imap_password"))
+                or bool(user.get("gmail")),
+                "imap_host": str(user.get(CONF_IMAP_HOST, "")),
+                "imap_username": (
+                    f"{str(user.get(CONF_IMAP_USERNAME, ''))[:2]}***"
+                    if user.get(CONF_IMAP_USERNAME)
+                    else ""
+                ),
+                # NOTE: imap_password / tokens are never included.
             }
         )
     packages: dict[str, Any] = {}

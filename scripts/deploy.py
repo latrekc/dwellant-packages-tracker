@@ -29,7 +29,7 @@ from ha_deploy_kit.cli import run
 
 DOMAIN = "dwellant_packages"
 FRONTEND = FrontendAsset(
-    source_rel="lovelace/dwellant-packages-card.js",
+    source_rel="www/dwellant-packages-card.js",
     published_remote="www/dwellant/dwellant-packages-card.js",
 )
 

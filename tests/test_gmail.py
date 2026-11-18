@@ -54,8 +54,12 @@ def test_client_searches_server_side_and_extracts():
     raw = _make_email(html)
 
     fake_imap = MagicMock()
+    fake_imap.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "INBOX"'])
+    fake_imap.select.return_value = ("OK", [b"100"])
     fake_imap.uid.side_effect = [
-        ("OK", [b"10 11"]),  # SEARCH -> two UIDs
+        ("OK", [b"10 11"]),  # TEXT SEARCH -> two UIDs
+        ("OK", [b""]),  # X-GM-RAW diagnostic -> empty
+        ("OK", [b""]),  # X-GM-RAW in:anywhere diagnostic -> empty
         ("OK", [(b"11 (BODY[] {...}", raw)]),  # FETCH newest -> match
     ]
 
@@ -73,9 +77,10 @@ def test_client_searches_server_side_and_extracts():
         "R4G3D6": {"email_found": True, "description": "A Miele package - DPD"}
     }
     # Server-side SEARCH carried the code — no bulk fetch.
-    search_call = fake_imap.uid.call_args_list[0]
-    assert search_call.args[0] == "SEARCH"
-    assert "R4G3D6" in search_call.args[2]
+    text_search = next(
+        c for c in fake_imap.uid.call_args_list if c.args[0] == "SEARCH" and c.args[1] == "TEXT"
+    )
+    assert "R4G3D6" in text_search.args[2]
 
 
 def test_client_fail_open_on_login_error():
@@ -106,8 +111,12 @@ def test_client_flags_email_found_even_when_note_empty():
     raw = msg.as_bytes()
 
     fake_imap = MagicMock()
+    fake_imap.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "INBOX"'])
+    fake_imap.select.return_value = ("OK", [b"100"])
     fake_imap.uid.side_effect = [
-        ("OK", [b"7"]),  # SEARCH -> one UID
+        ("OK", [b"7"]),  # TEXT SEARCH -> one UID
+        ("OK", [b""]),  # X-GM-RAW diagnostic -> empty
+        ("OK", [b""]),  # X-GM-RAW in:anywhere diagnostic -> empty
         ("OK", [(b"7 (BODY[] {...}", raw)]),  # FETCH -> body has code, empty note
     ]
 

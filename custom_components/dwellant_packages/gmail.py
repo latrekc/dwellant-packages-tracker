@@ -97,14 +97,41 @@ def _imap_blocking_search(
         # Concierge mail is auto-archived out of INBOX, so search All Mail
         # FIRST ([Gmail]/All Mail covers everything, INBOX included). Fall
         # back to INBOX only when All Mail select fails (non-Gmail servers).
+        # NOTE: imaplib returns ("NO", ...) rather than raising on a bad
+        # folder, so CHECK the select status — blindly continuing SEARCHes
+        # whatever folder was previously selected.
         try:
-            imap.select('"[Gmail]/All Mail"', readonly=True)
+            list_status, list_data = imap.list()
+            _LOGGER.debug(
+                "IMAP LIST for %s: status=%s folders=%r",
+                username,
+                list_status,
+                (list_data or [])[:20],
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("IMAP LIST failed for %s: %s", username, err)
+        sel_status, sel_data = imap.select('"[Gmail]/All Mail"', readonly=True)
+        _LOGGER.debug(
+            "IMAP SELECT All Mail for %s: status=%s data=%r",
+            username,
+            sel_status,
+            sel_data,
+        )
+        if sel_status == "OK":
             mailbox = "All Mail"
-        except Exception:  # noqa: BLE001
+        else:
             try:
-                imap.select("INBOX", readonly=True)
+                sel_status, sel_data = imap.select("INBOX", readonly=True)
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("IMAP select failed: %s", err)
+                return outcome
+            _LOGGER.debug(
+                "IMAP SELECT INBOX fallback for %s: status=%s data=%r",
+                username,
+                sel_status,
+                sel_data,
+            )
+            if sel_status != "OK":
                 return outcome
             mailbox = "INBOX"
         for code in codes:
@@ -126,6 +153,32 @@ def _imap_blocking_search(
                     status,
                     data[0][:200] if data and data[0] else b"",
                 )
+                # Diagnostic: Gmail's own search engine (same as the web UI)
+                # plus Spam/Trash scope. If X-GM-RAW hits while TEXT misses,
+                # the TEXT index is the problem, not the mailbox.
+                try:
+                    gstatus, gdata = imap.uid(
+                        "SEARCH", "X-GM-RAW", f'"{code}"'
+                    )
+                    _LOGGER.debug(
+                        "IMAP X-GM-RAW for code %s: status=%s uids=%r",
+                        code,
+                        gstatus,
+                        gdata[0][:200] if gdata and gdata[0] else b"",
+                    )
+                    astatus, adata = imap.uid(
+                        "SEARCH", "X-GM-RAW", f'"in:anywhere {code}"'
+                    )
+                    _LOGGER.debug(
+                        "IMAP X-GM-RAW in:anywhere for code %s: status=%s uids=%r",
+                        code,
+                        astatus,
+                        adata[0][:200] if adata and adata[0] else b"",
+                    )
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.debug(
+                        "IMAP X-GM-RAW diagnostic failed for %s: %s", code, err
+                    )
                 uids = []
                 if status == "OK" and data and data[0]:
                     uids = data[0].split()[-IMAP_SEARCH_LIMIT:]

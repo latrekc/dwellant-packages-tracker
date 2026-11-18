@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from custom_components.dwellant_packages.gmail import (  # noqa: E402
     ImapEnrichmentClient,
+    _all_mail_folder,
     _decode_body,
 )
 
@@ -54,8 +55,10 @@ def test_client_searches_server_side_and_extracts():
     raw = _make_email(html)
 
     fake_imap = MagicMock()
+    fake_imap.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "INBOX"'])
+    fake_imap.select.return_value = ("OK", [b"100"])
     fake_imap.uid.side_effect = [
-        ("OK", [b"10 11"]),  # SEARCH -> two UIDs
+        ("OK", [b"10 11"]),  # TEXT SEARCH -> two UIDs
         ("OK", [(b"11 (BODY[] {...}", raw)]),  # FETCH newest -> match
     ]
 
@@ -73,9 +76,10 @@ def test_client_searches_server_side_and_extracts():
         "R4G3D6": {"email_found": True, "description": "A Miele package - DPD"}
     }
     # Server-side SEARCH carried the code — no bulk fetch.
-    search_call = fake_imap.uid.call_args_list[0]
-    assert search_call.args[0] == "SEARCH"
-    assert "R4G3D6" in search_call.args[2]
+    text_search = next(
+        c for c in fake_imap.uid.call_args_list if c.args[0] == "SEARCH" and c.args[1] == "TEXT"
+    )
+    assert "R4G3D6" in text_search.args[2]
 
 
 def test_client_fail_open_on_login_error():
@@ -94,6 +98,57 @@ def test_client_fail_open_on_login_error():
     assert result == {"XYZ": {"email_found": False, "description": None}}
 
 
+def test_all_mail_folder_english_and_russian():
+    english = [
+        b'(\\HasNoChildren) "/" "INBOX"',
+        b'(\\All \\HasNoChildren) "/" "[Gmail]/All Mail"',
+    ]
+    assert _all_mail_folder(english) == '"[Gmail]/All Mail"'
+    russian = [
+        b'(\\HasNoChildren) "/" "INBOX"',
+        b'(\\All \\HasNoChildren) "/" "[Gmail]/&BBIEQQRP- &BD8EPgRHBEIEMA-"',
+    ]
+    assert _all_mail_folder(russian) == '"[Gmail]/&BBIEQQRP- &BD8EPgRHBEIEMA-"'
+    assert _all_mail_folder([b'(\\HasNoChildren) "/" "INBOX"']) is None
+    assert _all_mail_folder(None) is None
+    assert _all_mail_folder([]) is None
+
+
+def _fake_imap_for_search(list_folders, search_uids=b"7", fetch_raw=None):
+    fake_imap = MagicMock()
+    fake_imap.list.return_value = ("OK", list_folders)
+    fake_imap.select.return_value = ("OK", [b"100"])
+    fake_imap.uid.side_effect = [
+        ("OK", [search_uids]),  # TEXT SEARCH
+        ("OK", [(b"7 (BODY[] {...}", fetch_raw)]),  # FETCH
+    ]
+    return fake_imap
+
+
+def test_client_selects_archive_folder_from_list():
+    """SELECT targets the \\All folder, not a hardcoded English name."""
+    html = (FIXTURES / "gmail_email.html").read_text()
+    raw = _make_email(html)
+    russian = [
+        b'(\\HasNoChildren) "/" "INBOX"',
+        b'(\\All \\HasNoChildren) "/" "[Gmail]/&BBIEQQRP- &BD8EPgRHBEIEMA-"',
+    ]
+    fake_imap = _fake_imap_for_search(russian, fetch_raw=raw)
+
+    with patch(
+        "custom_components.dwellant_packages.gmail.imaplib.IMAP4_SSL",
+        return_value=fake_imap,
+    ):
+        client = ImapEnrichmentClient(
+            "user@example.com", {"imap_password": "app-pass"}
+        )
+        result = asyncio.run(client.async_fetch_descriptions(["R4G3D6"]))
+
+    assert result["R4G3D6"]["email_found"] is True
+    selected = [c.args[0] for c in fake_imap.select.call_args_list]
+    assert '"[Gmail]/&BBIEQQRP- &BD8EPgRHBEIEMA-"' in selected
+
+
 def test_client_flags_email_found_even_when_note_empty():
     """An email containing the code but no note -> found, description None."""
     msg = EmailMessage()
@@ -106,8 +161,10 @@ def test_client_flags_email_found_even_when_note_empty():
     raw = msg.as_bytes()
 
     fake_imap = MagicMock()
+    fake_imap.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "INBOX"'])
+    fake_imap.select.return_value = ("OK", [b"100"])
     fake_imap.uid.side_effect = [
-        ("OK", [b"7"]),  # SEARCH -> one UID
+        ("OK", [b"7"]),  # TEXT SEARCH -> one UID
         ("OK", [(b"7 (BODY[] {...}", raw)]),  # FETCH -> body has code, empty note
     ]
 

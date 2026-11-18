@@ -217,6 +217,14 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
             state, arrived, collected = merge_user_state(
                 previous, fetched, opts[CONF_RETENTION_DAYS], timestamp
             )
+            # Backfill history: late-arriving emails for already-collected
+            # codes land in the cache but merge only carries available items
+            # forward — overlay them here so collected attrs update too.
+            # Silent: no events fire for these (package is already gone).
+            try:
+                state = self._async_backfill_history(state)
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("History backfill skipped for %s", email)
             new_data[email] = state
             if previous is not None:  # never notify on first sight
                 self._fire_events(email, state, arrived, collected, opts)
@@ -301,6 +309,29 @@ class DwellantCoordinator(DataUpdateCoordinator[dict]):
                     item["email_found"] = cached["email_found"]
             enriched[code] = item
         return enriched
+
+    def _async_backfill_history(self, state: dict) -> dict:
+        """Overlay cached IMAP results onto history entries missing them.
+
+        Covers already-collected codes whose email arrived late: the search
+        finds them and the cache holds them, but merge only carries available
+        items forward. Same guarded copies as the fetched overlay — a cached
+        description never overwrites a present one, email_found is set once.
+        """
+        history = state.get("history", {})
+        if not isinstance(history, dict):
+            return state
+        for code, item in history.items():
+            if not isinstance(item, dict):
+                continue
+            cached = self._gmail_cache.get(code, {})
+            if not isinstance(cached, dict):
+                continue
+            if item.get("description") is None and cached.get("description") is not None:
+                item["description"] = cached["description"]
+            if "email_found" not in item and cached.get("email_found") is not None:
+                item["email_found"] = cached["email_found"]
+        return state
 
     @staticmethod
     def _email_found(previous: dict, code: str) -> bool:

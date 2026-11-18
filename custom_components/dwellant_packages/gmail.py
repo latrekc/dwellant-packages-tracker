@@ -53,6 +53,31 @@ def _decode_body(msg: EmailMessage) -> str:
         return ""
 
 
+def _all_mail_folder(list_data: list[bytes] | None) -> str | None:
+    """Pick the archive folder from a LIST response via the \\All flag.
+
+    Folder names are localized per account (English ``"[Gmail]/All Mail"``
+    vs Russian ``"[Gmail]/&BBIEQQRP- &BD8EPgRHBEIEMA-"``), so the name is
+    never hardcoded — the ``\\All`` flag is the locale-independent marker.
+    Returns the quoted folder name ready for SELECT, or None.
+    """
+    for entry in list_data or []:
+        try:
+            text = entry.decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            continue
+        # e.g. (\All \HasNoChildren) "/" "[Gmail]/All Mail" — the flags
+        # section (before ")") carries \All; the name may be localized.
+        flags = text.split(")")[0] if ")" in text else text
+        if "\\all" not in flags.lower():
+            continue
+        # Folder name is the last quoted string.
+        name = text.rsplit('"', 2)
+        if len(name) >= 3:
+            return f'"{name[-2]}"'
+    return None
+
+
 def _imap_blocking_search(
     host: str,
     username: str,
@@ -94,59 +119,54 @@ def _imap_blocking_search(
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("IMAP login failed for %s: %s", username, err)
             return outcome
-        # Concierge mail is auto-archived out of INBOX, so search All Mail
-        # FIRST ([Gmail]/All Mail covers everything, INBOX included). Fall
-        # back to INBOX only when All Mail select fails (non-Gmail servers).
+        # Concierge mail is auto-archived out of INBOX, so search the archive
+        # folder FIRST (it covers everything, INBOX included). The folder name
+        # is localized per account (English "[Gmail]/All Mail" vs Russian
+        # "[Gmail]/&BBIEQQRP- &BD8EPgRHBEIEMA-"), so pick it via the \All
+        # flag from LIST, never by hardcoded name. INBOX is the fallback for
+        # non-Gmail servers. NOTE: imaplib returns ("NO", ...) rather than
+        # raising on a bad folder, so CHECK the select status.
+        list_data: list[bytes] | None = None
         try:
-            imap.select('"[Gmail]/All Mail"', readonly=True)
-            mailbox = "All Mail"
+            _, list_data = imap.list()
         except Exception:  # noqa: BLE001
+            pass
+        all_mail = _all_mail_folder(list_data)
+        mailbox = "INBOX"  # default; overwritten when archive SELECT succeeds
+        selected = False
+        if all_mail is not None:
+            sel_status, _ = imap.select(all_mail, readonly=True)
+            if sel_status == "OK":
+                mailbox = "Archive"
+                selected = True
+        if not selected:
             try:
-                imap.select("INBOX", readonly=True)
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("IMAP select failed: %s", err)
+                sel_status, _ = imap.select("INBOX", readonly=True)
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("IMAP select failed for %s", username)
+                return outcome
+            if sel_status != "OK":
                 return outcome
             mailbox = "INBOX"
         for code in codes:
             try:
                 # Server-side search: only matching UIDs come back.
-                _LOGGER.debug(
-                    'IMAP SEARCH for code %s: UID SEARCH TEXT "%s" on %s '
-                    "of %s@%s",
-                    code,
-                    code,
-                    mailbox,
-                    username,
-                    host,
-                )
                 status, data = imap.uid("SEARCH", "TEXT", f'"{code}"')
-                _LOGGER.debug(
-                    "IMAP SEARCH for code %s: status=%s uids=%r",
-                    code,
-                    status,
-                    data[0][:200] if data and data[0] else b"",
-                )
                 uids = []
                 if status == "OK" and data and data[0]:
                     uids = data[0].split()[-IMAP_SEARCH_LIMIT:]
                 if not uids and mailbox != "INBOX":
-                    # All Mail empty (or non-Gmail): try INBOX explicitly.
+                    # Archive empty (or non-Gmail): try INBOX explicitly,
+                    # then reselect the archive folder we came from.
                     try:
                         imap.select("INBOX", readonly=True)
                         istatus, idata = imap.uid("SEARCH", "TEXT", f'"{code}"')
-                        _LOGGER.debug(
-                            "IMAP SEARCH for code %s on INBOX fallback: status=%s uids=%r",
-                            code,
-                            istatus,
-                            idata[0][:200] if idata and idata[0] else b"",
-                        )
                         if istatus == "OK" and idata and idata[0]:
                             uids = idata[0].split()[-IMAP_SEARCH_LIMIT:]
-                        imap.select('"[Gmail]/All Mail"', readonly=True)
-                    except Exception as err:  # noqa: BLE001
-                        _LOGGER.debug(
-                            "IMAP INBOX fallback failed for %s: %s", code, err
-                        )
+                        if all_mail is not None:
+                            imap.select(all_mail, readonly=True)
+                    except Exception:  # noqa: BLE001
+                        pass
                 if not uids:
                     continue
                 # Newest first; take the first whose body contains the code.
@@ -160,35 +180,20 @@ def _imap_blocking_search(
                     msg = email_lib.message_from_bytes(
                         raw, policy=email.policy.default
                     )
-                    from_addr = str(msg.get("From", ""))
-                    subject = str(msg.get("Subject", ""))
                     body = _decode_body(msg)
-                    _LOGGER.debug(
-                        "IMAP FETCH code=%s uid=%s from=%r subject=%r body_len=%d",
-                        code,
-                        uid,
-                        from_addr,
-                        subject,
-                        len(body),
-                    )
                     if code not in body:
-                        _LOGGER.debug(
-                            "IMAP FETCH code=%s uid=%s: code not in body, trying next",
-                            code,
-                            uid,
-                        )
                         continue
                     desc = extract_gmail_description(body)
-                    _LOGGER.debug(
-                        "IMAP FETCH code=%s uid=%s: extracted description=%r",
-                        code,
-                        uid,
-                        desc,
-                    )
                     results[code] = {
                         "email_found": True,
                         "description": desc,  # None when empty -> flag still True
                     }
+                    _LOGGER.debug(
+                        "IMAP match for code %s on %s: found=%s",
+                        code,
+                        mailbox,
+                        desc is not None,
+                    )
                     break
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("IMAP search for code %s failed: %s", code, err)

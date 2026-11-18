@@ -127,3 +127,53 @@ def test_email_found_codes_skipped_within_run():
     # Skipped codes pass through untouched; the flag + description are
     # re-attached downstream by merge_user_state from persisted state.
     assert enriched == {"AAA": {"code": "AAA"}}
+
+
+def test_backfill_history_updates_collected_codes():
+    """Late email for a collected code lands in history (sensor attrs)."""
+    entry_data = {
+        "users": [{"email": "user@example.com", "imap_password": "app-pass"}]
+    }
+    coord = _make_coordinator(entry_data, {})
+    coord._gmail_cache = {
+        "OLD": {"email_found": True, "description": "late note"},
+    }
+    state = {
+        "available": {},
+        "history": {
+            "OLD": {
+                "code": "OLD",
+                "status": "collected",
+                "collected_at": "2026-11-10T15:40:56+00:00",
+            }
+        },
+        "last_updated": "2026-11-18T00:00:00+00:00",
+    }
+    out = coord._async_backfill_history(state)
+    assert out["history"]["OLD"]["description"] == "late note"
+    assert out["history"]["OLD"]["email_found"] is True
+
+
+def test_backfill_history_never_overwrites():
+    """A present description/flag wins over the cache."""
+    entry_data = {
+        "users": [{"email": "user@example.com", "imap_password": "app-pass"}]
+    }
+    coord = _make_coordinator(entry_data, {})
+    coord._gmail_cache = {
+        "OLD": {"email_found": True, "description": "cached"},
+    }
+    state = {
+        "available": {},
+        "history": {
+            "OLD": {
+                "code": "OLD",
+                "status": "collected",
+                "description": "kept",
+                "email_found": True,
+            }
+        },
+        "last_updated": "2026-11-18T00:00:00+00:00",
+    }
+    out = coord._async_backfill_history(state)
+    assert out["history"]["OLD"]["description"] == "kept"
